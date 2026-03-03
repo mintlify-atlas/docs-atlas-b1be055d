@@ -1,0 +1,215 @@
+{
+  "projectType": "data-platform",
+  "projectName": "Spice.ai",
+  "projectDescription": "A portable accelerated SQL query, search, and LLM-inference engine for data-grounded AI apps and agents.",
+  "theme": "aspen",
+  "primaryColor": "#E25D3B",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/data-federation",
+              "concepts/data-acceleration",
+              "concepts/search",
+              "concepts/ai-inference",
+              "concepts/spicepods"
+            ]
+          },
+          {
+            "group": "Data Connectors",
+            "pages": [
+              "connectors/overview",
+              "connectors/s3",
+              "connectors/postgres",
+              "connectors/mysql",
+              "connectors/databricks",
+              "connectors/snowflake",
+              "connectors/duckdb",
+              "connectors/clickhouse",
+              "connectors/mongodb"
+            ]
+          },
+          {
+            "group": "Data Accelerators",
+            "pages": [
+              "accelerators/overview",
+              "accelerators/arrow",
+              "accelerators/duckdb",
+              "accelerators/sqlite",
+              "accelerators/postgres",
+              "accelerators/cayenne"
+            ]
+          },
+          {
+            "group": "Search",
+            "pages": [
+              "search/overview",
+              "search/vector-search",
+              "search/full-text-search",
+              "search/keyword-search",
+              "search/hybrid-search",
+              "search/s3-vectors"
+            ]
+          },
+          {
+            "group": "AI & ML",
+            "pages": [
+              "ai/overview",
+              "ai/openai-compatibility",
+              "ai/model-providers",
+              "ai/embeddings",
+              "ai/rag",
+              "ai/mcp-integration"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/distributed-query",
+              "deployment/configuration",
+              "deployment/monitoring"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Query APIs",
+            "pages": [
+              "api/sql",
+              "api/arrow-flight",
+              "api/arrow-flight-sql",
+              "api/odbc",
+              "api/jdbc",
+              "api/adbc"
+            ]
+          },
+          {
+            "group": "AI APIs",
+            "pages": [
+              "api/openai-chat",
+              "api/openai-embeddings",
+              "api/inference",
+              "api/nsql"
+            ]
+          },
+          {
+            "group": "HTTP APIs",
+            "pages": [
+              "api/http-query",
+              "api/datasets",
+              "api/models",
+              "api/catalogs",
+              "api/search-api"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "api/iceberg-catalog",
+              "api/mcp"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/run",
+              "cli/sql",
+              "cli/add",
+              "cli/dataset",
+              "cli/model",
+              "cli/search",
+              "cli/upgrade"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Extensibility",
+            "pages": [
+              "advanced/custom-connectors",
+              "advanced/custom-accelerators",
+              "advanced/catalog-connectors",
+              "advanced/secret-stores"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "advanced/query-optimization",
+              "advanced/caching",
+              "advanced/partitioning",
+              "advanced/snapshots"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "advanced/authentication",
+              "advanced/authorization",
+              "advanced/tls",
+              "advanced/secrets"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Federated SQL query across 30+ data sources",
+    "Multi-engine data acceleration (Arrow, DuckDB, SQLite, PostgreSQL, Cayenne)",
+    "Petabyte-scale vector search with Amazon S3 Vectors",
+    "Full-text and keyword search with Tantivy BM25",
+    "OpenAI-compatible API for local and hosted LLM inference",
+    "Distributed multi-node query execution with Apache Ballista",
+    "Apache Iceberg table writes and catalog integration",
+    "Model Context Protocol (MCP) for AI agent integration"
+  ],
+  "publicApiSurface": [
+    "HTTP /v1/sql - Execute SQL queries",
+    "HTTP /v1/chat/completions - OpenAI-compatible chat API",
+    "HTTP /v1/embeddings - Generate embeddings",
+    "HTTP /v1/search - Vector and full-text search",
+    "HTTP /v1/datasets - Manage datasets",
+    "HTTP /v1/models - Manage models",
+    "Arrow Flight - High-performance data streaming",
+    "Arrow Flight SQL - SQL over Arrow Flight",
+    "ODBC/JDBC - Standard database connectivity",
+    "spice init - Initialize new project",
+    "spice run - Start runtime daemon",
+    "spice sql - Interactive SQL REPL",
+    "spice add - Add dependencies to Spicepod",
+    "spice dataset configure - Configure datasets",
+    "vector_search() - SQL UDTF for vector similarity search",
+    "text_search() - SQL UDTF for full-text search"
+  ]
+}
