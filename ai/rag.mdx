@@ -1,0 +1,637 @@
+---
+title: 'Retrieval-Augmented Generation (RAG)'
+description: 'Build RAG workflows with vector search and LLM integration'
+---
+
+Retrieval-Augmented Generation (RAG) combines semantic search with large language models to provide accurate, context-aware responses grounded in your data.
+
+## Overview
+
+Spice provides a complete RAG stack:
+
+1. **Data Ingestion** - Load documents from any data source
+2. **Automatic Embedding** - Generate embeddings during ingestion
+3. **Vector Storage** - Store embeddings at any scale (S3 Vectors, pgvector, DuckDB)
+4. **Hybrid Search** - Combine vector and full-text search with RRF
+5. **LLM Integration** - Pass context to language models
+6. **SQL-Native** - Use familiar SQL for the entire pipeline
+
+## Basic RAG Workflow
+
+### 1. Configure Dataset with Embeddings
+
+```yaml
+version: v1
+kind: Spicepod
+name: rag-app
+
+datasets:
+  - from: postgres:documents
+    name: documents
+    acceleration:
+      enabled: true
+      engine: duckdb
+    columns:
+      - name: content
+        embeddings:
+          - from: text-embedding
+            row_id:
+              - id
+        full_text_search:
+          enabled: true
+          row_ids:
+            - id
+
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding
+    params:
+      openai_api_key: ${secrets:openai_key}
+
+models:
+  - from: openai:gpt-4o-mini
+    name: chat-model
+    params:
+      openai_api_key: ${secrets:openai_key}
+```
+
+### 2. Ingest Documents
+
+Documents are automatically embedded during ingestion:
+
+```sql
+INSERT INTO documents (id, title, content, category)
+VALUES 
+  (1, 'Introduction to RAG', 'RAG combines retrieval with generation...', 'technical'),
+  (2, 'Vector Databases', 'Vector databases store embeddings...', 'technical'),
+  (3, 'LLM Best Practices', 'When using LLMs, consider...', 'guide');
+```
+
+Spice automatically:
+- Generates embeddings for the `content` column
+- Creates full-text search indexes
+- Stores vectors in the configured backend
+
+### 3. Query with Vector Search
+
+Retrieve relevant documents:
+
+```sql
+SELECT id, title, content, _score
+FROM vector_search(documents, 'How does RAG improve accuracy?', 5)
+ORDER BY _score DESC;
+```
+
+Results:
+
+```
+id | title                  | content                              | _score
+---+------------------------+--------------------------------------+--------
+ 1 | Introduction to RAG    | RAG combines retrieval with...       | 0.89
+ 3 | LLM Best Practices     | When using LLMs, consider...         | 0.76
+ 2 | Vector Databases       | Vector databases store embeddings... | 0.68
+```
+
+### 4. Pass Context to LLM
+
+```python
+from openai import OpenAI
+import requests
+
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="not-needed"
+)
+
+# 1. Retrieve relevant context
+query = "How does RAG improve accuracy?"
+response = requests.post(
+    "http://localhost:8090/v1/sql",
+    json={
+        "sql": f"SELECT content FROM vector_search(documents, '{query}', 5)"
+    }
+)
+context_docs = [row[0] for row in response.json()]
+context = "\n\n".join(context_docs)
+
+# 2. Generate response with context
+completion = client.chat.completions.create(
+    model="chat-model",
+    messages=[
+        {
+            "role": "system",
+            "content": "Answer questions based on the provided context."
+        },
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nQuestion: {query}"
+        }
+    ]
+)
+
+print(completion.choices[0].message.content)
+```
+
+## Hybrid Search with RRF
+
+Combine vector and full-text search using Reciprocal Rank Fusion (RRF):
+
+```sql
+SELECT id, title, content, _score
+FROM (
+  SELECT * FROM vector_search(
+    documents, 
+    'machine learning algorithms',
+    rank_weight => 1.5
+  )
+  UNION ALL
+  SELECT * FROM text_search(
+    documents,
+    'neural networks deep learning',
+    rank_weight => 1.2
+  )
+)
+ORDER BY _score DESC
+LIMIT 10;
+```
+
+**Benefits of Hybrid Search:**
+- **Vector Search** - Captures semantic similarity
+- **Full-Text Search** - Exact keyword matching
+- **RRF** - Intelligently combines both approaches
+
+## Amazon S3 Vectors Integration
+
+For petabyte-scale RAG applications:
+
+```yaml
+datasets:
+  - from: s3:my-bucket/documents/
+    name: documents
+    acceleration:
+      enabled: true
+    columns:
+      - name: content
+        embeddings:
+          - from: text-embedding
+            row_id:
+              - id
+            vector_store: s3_vectors
+            vector_store_params:
+              bucket: my-vectors
+              region: us-east-1
+              embedding_model: bedrock:amazon.titan-embed-text-v2:0
+```
+
+S3 Vectors manages:
+- Automatic embedding generation
+- Petabyte-scale vector storage
+- Efficient similarity search
+- Lifecycle management
+
+## Advanced RAG Patterns
+
+### Filtered Vector Search
+
+Combine semantic search with business logic:
+
+```sql
+SELECT id, title, content, _score
+FROM vector_search(documents, 'kubernetes deployment', 10)
+WHERE 
+  category = 'technical' 
+  AND created_at > NOW() - INTERVAL '30 days'
+  AND _score > 0.7
+ORDER BY _score DESC;
+```
+
+### Multi-Column Search
+
+Search across multiple embedded columns:
+
+```yaml
+columns:
+  - name: title
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+  
+  - name: content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+```
+
+```sql
+-- Search both title and content
+SELECT id, _score
+FROM (
+  SELECT * FROM vector_search(documents, 'query', column => 'title')
+  UNION ALL
+  SELECT * FROM vector_search(documents, 'query', column => 'content')
+)
+GROUP BY id
+ORDER BY MAX(_score) DESC;
+```
+
+### Chunked Documents
+
+For long documents, enable chunking:
+
+```yaml
+columns:
+  - name: long_content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+        chunking:
+          enabled: true
+          chunk_size: 512
+          chunk_overlap: 50
+          strategy: recursive
+```
+
+Chunks are automatically created and embedded:
+
+```sql
+-- Search returns individual chunks
+SELECT id, chunk_id, content, _score
+FROM vector_search(documents, 'query', 10);
+```
+
+### Reranking
+
+Improve retrieval quality with two-stage ranking:
+
+```python
+# 1. Initial retrieval (fast, broad)
+initial_results = client.post(
+    "http://localhost:8090/v1/sql",
+    json={
+        "sql": f"SELECT id, content FROM vector_search(documents, '{query}', 50)"
+    }
+)
+
+# 2. Rerank with LLM (slower, precise)
+reranked = []
+for doc in initial_results.json():
+    score_response = client.chat.completions.create(
+        model="chat-model",
+        messages=[{
+            "role": "user",
+            "content": f"Rate relevance 0-10 for query '{query}': {doc['content']}"
+        }]
+    )
+    reranked.append((doc, extract_score(score_response)))
+
+top_docs = sorted(reranked, key=lambda x: x[1], reverse=True)[:5]
+```
+
+## Text-to-SQL with NSQL
+
+Combine RAG with text-to-SQL for natural language queries:
+
+```python
+# Generate SQL from natural language
+nsql_response = client.chat.completions.create(
+    model="chat-model",
+    messages=[{
+        "role": "user",
+        "content": "Find documents about machine learning from the last week"
+    }],
+    response_format={"type": "json_schema", "json_schema": sql_schema}
+)
+
+sql = extract_sql(nsql_response)
+
+# Execute generated SQL
+response = requests.post(
+    "http://localhost:8090/v1/sql",
+    json={"sql": sql}
+)
+
+results = response.json()
+```
+
+## RAG Evaluation
+
+Monitor RAG performance:
+
+```sql
+-- Check embedding coverage
+SELECT 
+  COUNT(*) as total_docs,
+  COUNT(embedding_content) as embedded_docs,
+  COUNT(embedding_content) * 100.0 / COUNT(*) as coverage_pct
+FROM documents;
+
+-- Analyze search score distribution
+SELECT 
+  CASE 
+    WHEN _score >= 0.8 THEN 'High'
+    WHEN _score >= 0.6 THEN 'Medium'
+    ELSE 'Low'
+  END as relevance,
+  COUNT(*) as count
+FROM vector_search(documents, 'test query', 100)
+GROUP BY relevance;
+```
+
+## Performance Optimization
+
+### Embedding Model Selection
+
+Choose based on your requirements:
+
+| Use Case | Model | Reason |
+|----------|-------|--------|
+| High accuracy | text-embedding-3-large | Best quality |
+| Balanced | text-embedding-3-small | Good quality, fast |
+| High throughput | Model2Vec | 500x faster |
+| Cost-sensitive | Local ONNX | No API costs |
+
+### Vector Storage Selection
+
+| Scale | Backend | Use When |
+|-------|---------|----------|
+| < 1M vectors | DuckDB | Single-node, analytical |
+| < 10M vectors | pgvector | PostgreSQL integration |
+| > 10M vectors | S3 Vectors | Petabyte scale |
+
+### Caching Strategy
+
+```yaml
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding
+    params:
+      openai_api_key: ${secrets:key}
+    caching:
+      enabled: true
+      max_size: 512MiB
+      ttl: 24h
+
+models:
+  - from: openai:gpt-4o-mini
+    name: chat-model
+    params:
+      openai_api_key: ${secrets:key}
+    caching:
+      enabled: true
+      max_size: 256MiB
+      ttl: 1h
+```
+
+### Query Optimization
+
+```sql
+-- Pre-filter before vector search (more efficient)
+SELECT id, content, _score
+FROM vector_search(
+  (SELECT * FROM documents WHERE category = 'technical'),
+  'query',
+  10
+);
+
+-- Limit result set
+SELECT * 
+FROM vector_search(documents, 'query', 5)  -- Only retrieve 5
+WHERE _score > 0.7;  -- Filter low scores
+```
+
+## Memory and Context Management
+
+### Conversation History
+
+```python
+class RAGConversation:
+    def __init__(self):
+        self.history = []
+    
+    def query(self, user_query):
+        # Retrieve context
+        context = self.retrieve_context(user_query)
+        
+        # Build messages with history
+        messages = [
+            {"role": "system", "content": "Answer using the context."},
+            {"role": "user", "content": f"Context: {context}"}
+        ] + self.history + [
+            {"role": "user", "content": user_query}
+        ]
+        
+        # Generate response
+        response = client.chat.completions.create(
+            model="chat-model",
+            messages=messages
+        )
+        
+        # Update history
+        self.history.append({"role": "user", "content": user_query})
+        self.history.append({"role": "assistant", "content": response.choices[0].message.content})
+        
+        return response.choices[0].message.content
+    
+    def retrieve_context(self, query):
+        response = requests.post(
+            "http://localhost:8090/v1/sql",
+            json={
+                "sql": f"SELECT content FROM vector_search(documents, '{query}', 3)"
+            }
+        )
+        return "\n\n".join([row[0] for row in response.json()])
+```
+
+### Context Window Management
+
+```python
+def truncate_context(docs, max_tokens=3000):
+    """Truncate context to fit in model's context window."""
+    context = ""
+    token_count = 0
+    
+    for doc in docs:
+        doc_tokens = len(doc.split()) * 1.3  # Rough estimate
+        if token_count + doc_tokens > max_tokens:
+            break
+        context += doc + "\n\n"
+        token_count += doc_tokens
+    
+    return context
+```
+
+## Semantic Model Integration
+
+Define semantic context for RAG:
+
+```yaml
+semantic:
+  measures:
+    - name: relevance_score
+      type: float
+      description: Document relevance to query
+  
+  dimensions:
+    - name: document_category
+      type: string
+      description: Content category
+```
+
+Use in queries:
+
+```sql
+SELECT 
+  document_category,
+  AVG(relevance_score) as avg_relevance,
+  COUNT(*) as num_results
+FROM vector_search(documents, 'query', 100)
+GROUP BY document_category;
+```
+
+## Best Practices
+
+### 1. Chunk Size Selection
+
+- **Small chunks (256-512 tokens)** - Precise matching, more results
+- **Large chunks (1024-2048 tokens)** - More context, fewer results
+- **Overlap** - 10-20% overlap to preserve context across boundaries
+
+### 2. Embedding Model Consistency
+
+Always use the same embedding model for indexing and querying:
+
+```yaml
+# Index time
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding
+```
+
+```python
+# Query time - use same model
+query_embedding = client.embeddings.create(
+    model="text-embedding",  # Same model
+    input=query
+)
+```
+
+### 3. Prompt Engineering
+
+Structure prompts for better RAG responses:
+
+```python
+prompt = f"""
+You are a helpful assistant that answers questions based on provided context.
+
+Context:
+{context}
+
+Instructions:
+- Answer based only on the context above
+- If the context doesn't contain enough information, say so
+- Include relevant quotes from the context
+- Be concise and accurate
+
+Question: {user_question}
+
+Answer:
+"""
+```
+
+### 4. Error Handling
+
+```python
+def rag_query(query):
+    try:
+        # Retrieve context
+        context = retrieve_context(query)
+        
+        if not context:
+            return "No relevant documents found."
+        
+        # Generate response
+        response = generate_response(query, context)
+        return response
+        
+    except Exception as e:
+        logging.error(f"RAG query failed: {e}")
+        return "I encountered an error processing your question."
+```
+
+## Complete RAG Example
+
+```python
+import requests
+from openai import OpenAI
+
+class SpiceRAG:
+    def __init__(self, base_url="http://localhost:8090"):
+        self.base_url = base_url
+        self.client = OpenAI(base_url=f"{base_url}/v1", api_key="not-needed")
+    
+    def query(self, question, table="documents", top_k=5):
+        # 1. Retrieve relevant documents
+        sql = f"""
+            SELECT id, title, content, _score
+            FROM vector_search({table}, '{question}', {top_k})
+            WHERE _score > 0.6
+            ORDER BY _score DESC
+        """
+        
+        response = requests.post(
+            f"{self.base_url}/v1/sql",
+            json={"sql": sql}
+        )
+        docs = response.json()
+        
+        if not docs:
+            return "No relevant information found."
+        
+        # 2. Format context
+        context = "\n\n".join([
+            f"Document {i+1} (relevance: {doc['_score']:.2f}):\n{doc['content']}"
+            for i, doc in enumerate(docs)
+        ])
+        
+        # 3. Generate response
+        completion = self.client.chat.completions.create(
+            model="chat-model",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Answer questions based on the provided context. Cite document numbers."
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{context}\n\nQuestion: {question}"
+                }
+            ]
+        )
+        
+        return completion.choices[0].message.content
+
+# Usage
+rag = SpiceRAG()
+answer = rag.query("How does RAG improve LLM accuracy?")
+print(answer)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Embeddings" icon="vector-square" href="/ai/embeddings">
+    Configure embedding models
+  </Card>
+  <Card title="Vector Search" icon="search" href="/reference/sql/search">
+    Learn vector_search and text_search
+  </Card>
+  <Card title="Model Providers" icon="server" href="/ai/model-providers">
+    Set up LLM providers
+  </Card>
+  <Card title="MCP Integration" icon="plug" href="/ai/mcp-integration">
+    Add tool calling to RAG
+  </Card>
+</CardGroup>

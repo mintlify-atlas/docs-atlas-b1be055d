@@ -1,0 +1,378 @@
+---
+title: "Model Inference API"
+description: "Make predictions using configured ML models"
+---
+
+Spice provides a REST API for running inference on configured machine learning models. Use this API to make predictions with your trained models.
+
+## Endpoints
+
+### Single Model Prediction
+
+```
+GET /v1/models/{name}/predict
+```
+
+Make a prediction using a specific model.
+
+### Batch Predictions
+
+```
+POST /v1/predict
+```
+
+Perform predictions using multiple models in a single request. Useful for ensembling or A/B testing.
+
+## Authentication
+
+Include your Spice API key in the request headers:
+
+```bash
+Authorization: Bearer <your-api-key>
+```
+
+## Single Model Prediction
+
+### Request
+
+```bash
+GET /v1/models/{model_name}/predict
+```
+
+Replace `{model_name}` with the name of your configured model.
+
+### Response Format
+
+```json
+{
+  "status": "Success",
+  "model_name": "my_model",
+  "model_version": "1.0",
+  "prediction": [0.45, 0.50, 0.55],
+  "duration_ms": 123
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Prediction status: `Success`, `BadRequest`, or `InternalError` |
+| `model_name` | string | Name of the model used |
+| `model_version` | string | Version of the model |
+| `prediction` | array | Prediction results as an array of floats |
+| `duration_ms` | integer | Time taken to complete the prediction in milliseconds |
+| `error_message` | string | Error description (only present on failure) |
+
+## Batch Predictions
+
+### Request Body
+
+```json
+{
+  "predictions": [
+    { "model_name": "drive_stats_a" },
+    { "model_name": "drive_stats_b" }
+  ]
+}
+```
+
+### Response Format
+
+```json
+{
+  "duration_ms": 81,
+  "predictions": [
+    {
+      "status": "Success",
+      "model_name": "drive_stats_a",
+      "model_version": "1.0",
+      "prediction": [0.45, 0.5, 0.55],
+      "duration_ms": 42
+    },
+    {
+      "status": "Success",
+      "model_name": "drive_stats_b",
+      "model_version": "1.0",
+      "prediction": [0.43, 0.51, 0.53],
+      "duration_ms": 42
+    }
+  ]
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `duration_ms` | integer | Total time for all predictions in milliseconds |
+| `predictions` | array | Array of individual prediction results |
+
+Each prediction object has the same fields as the single model response.
+
+## Examples
+
+### Single Model Prediction
+
+#### cURL
+
+```bash
+curl -X GET http://localhost:8090/v1/models/price_predictor/predict \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/models/price_predictor/predict"
+headers = {
+    "Authorization": "Bearer <your-api-key>"
+}
+
+response = requests.get(url, headers=headers)
+result = response.json()
+
+print(f"Prediction: {result['prediction']}")
+print(f"Duration: {result['duration_ms']}ms")
+```
+
+#### Node.js
+
+```javascript
+const axios = require('axios');
+
+const url = 'http://localhost:8090/v1/models/price_predictor/predict';
+const headers = {
+  'Authorization': 'Bearer <your-api-key>'
+};
+
+axios.get(url, { headers })
+  .then(response => {
+    console.log('Prediction:', response.data.prediction);
+    console.log('Duration:', response.data.duration_ms, 'ms');
+  })
+  .catch(error => {
+    console.error('Error:', error.response.data);
+  });
+```
+
+### Batch Predictions
+
+#### cURL
+
+```bash
+curl -X POST http://localhost:8090/v1/predict \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "predictions": [
+      { "model_name": "model_v1" },
+      { "model_name": "model_v2" },
+      { "model_name": "model_ensemble" }
+    ]
+  }'
+```
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/predict"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer <your-api-key>"
+}
+payload = {
+    "predictions": [
+        {"model_name": "model_v1"},
+        {"model_name": "model_v2"}
+    ]
+}
+
+response = requests.post(url, json=payload, headers=headers)
+result = response.json()
+
+print(f"Total duration: {result['duration_ms']}ms")
+for pred in result['predictions']:
+    print(f"{pred['model_name']}: {pred['prediction']} ({pred['duration_ms']}ms)")
+```
+
+#### Node.js
+
+```javascript
+const axios = require('axios');
+
+const url = 'http://localhost:8090/v1/predict';
+const headers = {
+  'Content-Type': 'application/json',
+  'Authorization': 'Bearer <your-api-key>'
+};
+const data = {
+  predictions: [
+    { model_name: 'model_v1' },
+    { model_name: 'model_v2' }
+  ]
+};
+
+axios.post(url, data, { headers })
+  .then(response => {
+    console.log('Total duration:', response.data.duration_ms, 'ms');
+    response.data.predictions.forEach(pred => {
+      console.log(`${pred.model_name}: ${pred.prediction} (${pred.duration_ms}ms)`);
+    });
+  })
+  .catch(error => {
+    console.error('Error:', error.response.data);
+  });
+```
+
+## Use Cases
+
+### A/B Testing
+
+Compare predictions from different model versions:
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/predict"
+payload = {
+    "predictions": [
+        {"model_name": "model_v1"},
+        {"model_name": "model_v2_experimental"}
+    ]
+}
+
+response = requests.post(url, json=payload, headers=headers)
+results = response.json()
+
+# Compare predictions
+v1_pred = results['predictions'][0]['prediction']
+v2_pred = results['predictions'][1]['prediction']
+
+print(f"V1 prediction: {v1_pred}")
+print(f"V2 prediction: {v2_pred}")
+print(f"Difference: {abs(v1_pred[0] - v2_pred[0])}")
+```
+
+### Ensemble Predictions
+
+Combine predictions from multiple models:
+
+```python
+import numpy as np
+import requests
+
+url = "http://localhost:8090/v1/predict"
+payload = {
+    "predictions": [
+        {"model_name": "model_1"},
+        {"model_name": "model_2"},
+        {"model_name": "model_3"}
+    ]
+}
+
+response = requests.post(url, json=payload, headers=headers)
+results = response.json()
+
+# Extract predictions and calculate ensemble
+predictions = [pred['prediction'] for pred in results['predictions'] 
+               if pred['status'] == 'Success']
+ensemble_prediction = np.mean(predictions, axis=0)
+
+print(f"Ensemble prediction: {ensemble_prediction}")
+```
+
+## Prediction Status
+
+### Success
+
+Prediction completed successfully:
+
+```json
+{
+  "status": "Success",
+  "model_name": "my_model",
+  "model_version": "1.0",
+  "prediction": [0.45, 0.50, 0.55],
+  "duration_ms": 123
+}
+```
+
+### Bad Request (400)
+
+Invalid request or model not found:
+
+```json
+{
+  "status": "BadRequest",
+  "error_message": "Model 'unknown_model' not found",
+  "model_name": "unknown_model",
+  "duration_ms": 12
+}
+```
+
+### Internal Error (500)
+
+Server error during prediction:
+
+```json
+{
+  "status": "InternalError",
+  "error_message": "Unable to find column 'y' in inference result",
+  "model_name": "my_model",
+  "model_version": "1.0",
+  "duration_ms": 12
+}
+```
+
+## Model Configuration
+
+Models must be configured in your Spicepod before they can be used for inference. Example configuration:
+
+```yaml
+models:
+  - name: price_predictor
+    from: file:///models/price_model.onnx
+    datasets:
+      - input_data
+```
+
+See the [Models documentation](/components/models) for configuration details.
+
+## Performance Considerations
+
+1. **Batch predictions**: Use batch endpoint for multiple models to reduce network overhead
+2. **Model loading**: Models are loaded on startup; first predictions may be slower
+3. **Concurrency**: Batch predictions run concurrently for better performance
+4. **Data format**: Predictions expect Float32Array results (column 'y')
+
+## Error Handling
+
+Always check the `status` field in responses:
+
+```python
+response = requests.get(f"{url}/v1/models/{model_name}/predict", headers=headers)
+result = response.json()
+
+if result['status'] != 'Success':
+    print(f"Prediction failed: {result.get('error_message', 'Unknown error')}")
+else:
+    print(f"Prediction: {result['prediction']}")
+```
+
+For batch predictions, check individual prediction statuses:
+
+```python
+response = requests.post(f"{url}/v1/predict", json=payload, headers=headers)
+results = response.json()
+
+for pred in results['predictions']:
+    if pred['status'] == 'Success':
+        print(f"{pred['model_name']}: {pred['prediction']}")
+    else:
+        print(f"{pred['model_name']} failed: {pred.get('error_message')}")
+```

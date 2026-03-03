@@ -1,0 +1,392 @@
+---
+title: 'DuckDB Accelerator'
+description: 'Embedded analytical database acceleration with DuckDB'
+---
+
+The DuckDB accelerator provides high-performance analytical query acceleration using an embedded DuckDB database. It supports both memory and file modes, making it suitable for datasets that exceed available RAM.
+
+## When to Use DuckDB
+
+- **Analytical workloads**: Complex aggregations, window functions, joins
+- **Larger datasets**: Use file mode for data that doesn't fit in memory
+- **Advanced SQL**: Requires DuckDB-specific features
+- **Single-file storage**: Dataset can fit in one DuckDB file (&lt;100GB typical)
+
+## Configuration
+
+### Memory Mode
+
+Data stored in RAM (volatile):
+
+```yaml
+datasets:
+  - name: analytics
+    from: s3://data-lake/events/
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: memory
+```
+
+### File Mode
+
+Data persisted to disk:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+  params:
+    duckdb_file: /data/my_dataset.duckdb
+```
+
+### Default File Location
+
+If `duckdb_file` not specified, uses `{spice_data_dir}/accelerated_duckdb.db`:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+```
+
+### File Create Mode
+
+Deletes existing file on startup:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file_create
+  params:
+    duckdb_file: /data/fresh_dataset.duckdb
+```
+
+## Refresh Modes
+
+### Full Refresh
+
+Replaces all data:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  refresh_mode: full
+  refresh_interval: 1h
+```
+
+### Append Mode
+
+Appends only new data based on time column:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  refresh_mode: append
+  refresh_interval: 5m
+  time_column: created_at
+```
+
+## Snapshots
+
+Bootstrap from S3 snapshots for fast cold starts:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+  snapshot:
+    enabled: true
+    source: s3://my-bucket/snapshots/my_dataset/
+    refresh: true
+```
+
+Snapshots support file mode only. Downloading a snapshot is much faster than full data refresh.
+
+## Performance Features
+
+### Preserve Insertion Order
+
+Maintains insertion order using internal tables:
+
+```yaml
+params:
+  preserve_insertion_order: true
+```
+
+Useful for time-series data but adds overhead.
+
+### On-Refresh Sorting
+
+Sort data after each refresh for better query performance:
+
+```yaml
+params:
+  on_refresh_sort_columns: timestamp DESC, user_id ASC
+```
+
+Note: Recreates table, dropping indexes and constraints.
+
+### Recompute Statistics
+
+Recompute statistics after writes for optimal query plans:
+
+```yaml
+params:
+  on_refresh_recompute_statistics: true
+```
+
+### Index Configuration
+
+```yaml
+params:
+  index_scan_percentage: 0.6  # Use index if selectivity < 60%
+  index_scan_max_count: 1000000  # Max rows for index scan
+```
+
+## Connection Pooling
+
+### Pool Size
+
+Configure connection pool size:
+
+```yaml
+params:
+  connection_pool_size: 20  # Default: 10 or number of datasets
+```
+
+Increases concurrency for high-traffic deployments.
+
+### Memory Limit
+
+Set per-connection memory limit:
+
+```yaml
+params:
+  memory_limit: 4GB
+```
+
+## Federation
+
+DuckDB accelerators can federate queries across multiple file-mode DuckDB databases. Spice automatically attaches other DuckDB databases.
+
+```yaml
+datasets:
+  - name: orders
+    acceleration:
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/orders.duckdb
+  
+  - name: customers
+    acceleration:
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/customers.duckdb
+```
+
+Query across both:
+
+```sql
+SELECT o.order_id, c.customer_name
+FROM orders o
+JOIN customers c ON o.customer_id = c.id;
+```
+
+## Retention SQL
+
+Delete old data automatically on each refresh:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  retention_sql: |
+    DELETE FROM my_dataset 
+    WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '30 days'
+```
+
+Executed before commit in a transaction.
+
+## Primary Keys and Constraints
+
+### Primary Key
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  primary_key: id
+```
+
+### Composite Primary Key
+
+```yaml
+primary_key:
+  - customer_id
+  - order_id
+```
+
+### On Conflict Behavior
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  primary_key: id
+  on_conflict: upsert
+```
+
+## File Extensions
+
+DuckDB supports multiple file extensions:
+
+- `.db`
+- `.ddb`
+- `.duckdb`
+
+## Performance Characteristics
+
+### Query Performance
+
+| Operation       | Performance | Notes                           |
+|-----------------|-------------|---------------------------------|
+| Full table scan | Excellent   | Columnar storage, SIMD          |
+| Aggregations    | Excellent   | Optimized group-by              |
+| Window functions| Excellent   | Native support                  |
+| Joins           | Excellent   | Hash and merge joins            |
+| Point queries   | Good        | Better with indexes             |
+
+### Storage
+
+| Feature        | Details                                 |
+|----------------|-----------------------------------------|
+| Format         | Columnar (compressed)                   |
+| Compression    | Automatic (zstd, dictionary, RLE)       |
+| Ratio          | Typically 5-10x compression             |
+| Max file size  | ~100GB typical, larger possible         |
+
+## Partitioning
+
+DuckDB supports table partitioning:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  partition_by:
+    - year
+    - month
+  params:
+    partition_mode: tables
+```
+
+Creates separate tables per partition for pruning.
+
+## Example Configurations
+
+### Time-Series Analytics
+
+```yaml
+datasets:
+  - name: events
+    from: kafka://localhost:9092/events
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_mode: append
+      refresh_interval: 1m
+      time_column: event_time
+      params:
+        duckdb_file: /data/events.duckdb
+        on_refresh_sort_columns: event_time DESC
+      retention_sql: |
+        DELETE FROM events 
+        WHERE event_time < CURRENT_TIMESTAMP - INTERVAL '7 days'
+```
+
+### Large Dataset with Snapshot
+
+```yaml
+datasets:
+  - name: sales
+    from: s3://data-lake/sales/
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/sales.duckdb
+        memory_limit: 8GB
+        connection_pool_size: 20
+      snapshot:
+        enabled: true
+        source: s3://snapshots/sales/
+        refresh: true
+      refresh_interval: 1h
+```
+
+### In-Memory Analytics
+
+```yaml
+datasets:
+  - name: metrics
+    from: postgres://db/metrics
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: memory
+      refresh_interval: 5m
+```
+
+## Monitoring
+
+```sql
+-- File size
+SELECT 
+  dataset_name,
+  file_size_bytes / 1024 / 1024 as size_mb
+FROM runtime.metrics
+WHERE name = 'acceleration_file_size';
+
+-- Row count
+SELECT 
+  dataset_name,
+  value as row_count
+FROM runtime.metrics
+WHERE name = 'acceleration_rows';
+```
+
+## Parameters
+
+| Parameter                       | Type    | Description                                   | Default     |
+|---------------------------------|---------|-----------------------------------------------|-------------|
+| duckdb_file                     | string  | Path to DuckDB file                           | auto        |
+| memory_limit                    | string  | Per-connection memory limit (e.g., "4GB")     | -           |
+| connection_pool_size            | integer | Max connections in pool                       | 10          |
+| preserve_insertion_order        | boolean | Maintain row insertion order                  | false       |
+| on_refresh_sort_columns         | string  | Sort columns after refresh (e.g., "time DESC")| -           |
+| on_refresh_recompute_statistics | boolean | Recompute stats after writes                  | false       |
+| index_scan_percentage           | float   | Selectivity threshold for index use           | 0.6         |
+| index_scan_max_count            | integer | Max rows for index scan                       | 1000000     |
+
+## Limitations
+
+- Single-file storage (partition for larger datasets)
+- File mode requires local disk
+- No built-in replication (use snapshots for backup)
+
+## Next Steps
+
+- [Cayenne Accelerator](/accelerators/cayenne) - For multi-file append-heavy workloads
+- [Arrow Accelerator](/accelerators/arrow) - For in-memory speed
+- [Snapshots Documentation](https://spiceai.org/docs/features/acceleration-snapshots)

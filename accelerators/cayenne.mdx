@@ -1,0 +1,471 @@
+---
+title: 'Cayenne Accelerator (Vortex)'
+description: 'Multi-file columnar acceleration with Spice Cayenne and Vortex format'
+---
+
+The Cayenne accelerator provides high-performance multi-file acceleration using the Vortex columnar format. It delivers DuckDB-comparable performance without single-file scaling limitations, making it ideal for append-heavy workloads that grow continuously.
+
+## When to Use Cayenne
+
+- **Append-heavy workloads**: Time-series data, logs, events
+- **Continuous growth**: Data that grows indefinitely
+- **Multi-file support**: No single-file size limits
+- **OLAP analytics**: Aggregations, scans, analytical queries
+- **Vortex format**: SIMD-optimized columnar compression
+
+## Configuration
+
+### Basic File Mode
+
+Cayenne only supports file mode (memory mode not available):
+
+```yaml
+datasets:
+  - name: events
+    from: kafka://localhost:9092/events
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+```
+
+### Custom Data Path
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  mode: file
+  params:
+    cayenne_file_path: /data/cayenne/events/
+```
+
+Default location: `{spice_data_dir}/{dataset_name}/`
+
+### Metadata Directory
+
+Cayenne uses SQLite for metadata catalog:
+
+```yaml
+params:
+  cayenne_metadata_dir: /data/cayenne/metadata/
+```
+
+Default: `{cayenne_file_path}/metadata/` or `{spice_data_dir}/metadata/`
+
+## S3 Express One Zone Storage
+
+Cayenne supports S3 Express One Zone for low-latency cloud storage. Data files are stored in S3 while metadata remains on local disk.
+
+### Explicit S3 Express Path
+
+```yaml
+params:
+  cayenne_file_path: s3://my-bucket--usw2-az1--x-s3/events/
+```
+
+Format: `s3://{bucket-name}--{zone-id}--x-s3/{prefix}/`
+
+### Auto-Generated S3 Buckets
+
+```yaml
+params:
+  cayenne_s3_zone_ids: usw2-az1,usw2-az2,usw2-az3
+  cayenne_s3_region: us-west-2
+  cayenne_s3_access_key: ${secrets:aws_access_key}
+  cayenne_s3_secret_key: ${secrets:aws_secret_key}
+```
+
+Spice auto-generates bucket names and creates them if needed. The first zone is used as the primary zone for reads.
+
+### S3 Express Benefits
+
+- **Low latency**: Single-digit millisecond latency within same AZ
+- **High throughput**: Up to 100 Gbps per bucket
+- **Cost-effective**: Lower cost than standard S3 for frequent access
+- **Separation**: Data in S3, metadata on local disk
+
+## Refresh Modes
+
+### Append Mode
+
+Cayenne excels at append-only workloads:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  refresh_mode: append
+  refresh_interval: 1m
+  time_column: timestamp
+```
+
+### Full Refresh
+
+Replaces all data (recreates files):
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  refresh_mode: full
+  refresh_interval: 1h
+```
+
+## Vortex Configuration
+
+### Target File Size
+
+Configure target size for Vortex data files:
+
+```yaml
+params:
+  cayenne_target_file_size_mb: 512  # Default: 256 MB
+```
+
+Larger files:
+- Better compression
+- Fewer files to manage
+- Slower individual file reads
+
+Smaller files:
+- Faster partition pruning
+- More granular retention
+- More files to manage
+
+### Compression Strategy
+
+```yaml
+params:
+  cayenne_compression_strategy: btrblocks  # or 'zstd'
+```
+
+- **btrblocks** (default): SIMD-optimized compression, better for OLAP
+- **zstd**: General-purpose compression, good compression ratio
+
+### Sort Columns
+
+Sort data by columns during inserts:
+
+```yaml
+params:
+  sort_columns: timestamp,user_id
+```
+
+Benefits:
+- Faster range queries on sorted columns
+- Better compression
+- Improved filter pushdown
+
+### Caching
+
+Configure in-memory caches for better performance:
+
+```yaml
+params:
+  cayenne_footer_cache_mb: 256    # Default: 128 MB
+  cayenne_segment_cache_mb: 512   # Default: 256 MB
+```
+
+- **Footer cache**: Stores file metadata (schema, stats)
+- **Segment cache**: Stores decompressed data segments
+
+### Upload Concurrency
+
+Concurrent file uploads for S3:
+
+```yaml
+params:
+  cayenne_upload_concurrency: 8  # Default: 4
+```
+
+Increase for faster writes to S3 (adjust based on network bandwidth).
+
+## Unsupported Data Types
+
+Vortex doesn't natively support some Arrow types. Configure handling:
+
+```yaml
+params:
+  unsupported_type_action: string  # or 'error', 'warn', 'ignore'
+```
+
+- **string**: Convert unsupported types to UTF8 (default)
+- **error**: Fail on unsupported types
+- **warn**: Include in schema, may fail on insert
+- **ignore**: Skip unsupported fields
+
+Unsupported types:
+- `Duration`
+- `Interval`
+- `Map`
+- `FixedSizeBinary`
+- `Time32`, `Time64` (converted to Timestamp)
+
+## Partitioning
+
+Cayenne supports Hive-style partitioning:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  partition_by:
+    - year
+    - month
+    - day
+```
+
+Data stored in nested directories:
+
+```
+/data/events/
+  year=2024/
+    month=01/
+      day=01/
+        data_001.cayenne
+        data_002.cayenne
+      day=02/
+        data_001.cayenne
+```
+
+## Retention
+
+### Time-Based Retention
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  retention_period: 30d
+  time_column: timestamp
+```
+
+Automatically deletes data older than retention period.
+
+### Retention SQL
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  retention_sql: |
+    DELETE FROM events 
+    WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '7 days'
+```
+
+## Snapshots
+
+Bootstrap from S3 snapshots:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  mode: file
+  snapshot:
+    enabled: true
+    source: s3://snapshots/events/
+    refresh: true
+```
+
+Snapshots include both data files and metadata catalog.
+
+## Primary Keys and On Conflict
+
+### Primary Key
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  primary_key: event_id
+```
+
+### On Conflict Upsert
+
+```yaml
+acceleration:
+  enabled: true
+  engine: cayenne
+  primary_key: event_id
+  on_conflict: upsert
+```
+
+Upserts update existing rows or insert new ones.
+
+## Metastore Options
+
+Cayenne supports different metadata backends:
+
+### SQLite (Default)
+
+```yaml
+params:
+  cayenne_metastore: sqlite
+```
+
+### Turso
+
+```yaml
+params:
+  cayenne_metastore: turso
+```
+
+Requires `turso` feature enabled at build time.
+
+## Performance Characteristics
+
+### Query Performance
+
+| Operation        | Performance | Notes                           |
+|------------------|-------------|---------------------------------|
+| Full table scan  | Excellent   | SIMD-optimized Vortex format    |
+| Aggregations     | Excellent   | Columnar compression            |
+| Range queries    | Excellent   | Especially on sorted columns    |
+| Point queries    | Good        | Better with primary key         |
+| Joins            | Good        | In-memory hash joins            |
+| Partition pruning| Excellent   | Skips irrelevant partitions     |
+
+### Storage
+
+| Feature         | Details                                  |
+|-----------------|------------------------------------------|
+| Format          | Vortex columnar (multi-file)             |
+| Compression     | Btrblocks or Zstd                        |
+| Ratio           | 5-15x compression typical                |
+| File size       | Configurable (256 MB default)            |
+| Scaling         | No single-file limit                     |
+
+### Write Performance
+
+- **Append**: Excellent (new files created)
+- **Update**: Good (with primary key)
+- **Delete**: Good (deletion vectors)
+
+## Example Configurations
+
+### Time-Series Events
+
+```yaml
+datasets:
+  - name: sensor_data
+    from: kafka://localhost:9092/sensors
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+      refresh_mode: append
+      refresh_interval: 1m
+      time_column: timestamp
+      params:
+        cayenne_file_path: /data/sensors/
+        cayenne_target_file_size_mb: 256
+        sort_columns: timestamp,sensor_id
+        cayenne_compression_strategy: btrblocks
+      retention_period: 90d
+```
+
+### Partitioned Logs
+
+```yaml
+datasets:
+  - name: application_logs
+    from: s3://logs-bucket/app-logs/
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+      refresh_mode: append
+      refresh_interval: 5m
+      time_column: log_time
+      partition_by:
+        - year
+        - month
+        - day
+      params:
+        cayenne_file_path: /data/logs/
+        cayenne_target_file_size_mb: 512
+      retention_period: 30d
+```
+
+### S3 Express One Zone
+
+```yaml
+datasets:
+  - name: high_volume_events
+    from: kafka://kafka:9092/events
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+      refresh_mode: append
+      refresh_interval: 30s
+      time_column: event_time
+      params:
+        cayenne_s3_zone_ids: usw2-az1
+        cayenne_s3_region: us-west-2
+        cayenne_s3_access_key: ${secrets:aws_access_key}
+        cayenne_s3_secret_key: ${secrets:aws_secret_key}
+        cayenne_target_file_size_mb: 256
+        cayenne_upload_concurrency: 8
+        cayenne_metadata_dir: /data/metadata/
+```
+
+## Monitoring
+
+```sql
+-- Data directory size
+SELECT 
+  dataset_name,
+  directory_size_bytes / 1024 / 1024 / 1024 as size_gb
+FROM runtime.metrics
+WHERE name = 'acceleration_directory_size';
+
+-- File count
+SELECT 
+  dataset_name,
+  value as file_count
+FROM runtime.metrics
+WHERE name = 'acceleration_file_count';
+
+-- Row count
+SELECT 
+  dataset_name,
+  value as row_count
+FROM runtime.metrics
+WHERE name = 'acceleration_rows';
+```
+
+## Parameters
+
+| Parameter                       | Type    | Description                                  | Default     |
+|---------------------------------|---------|----------------------------------------------|-------------|
+| cayenne_file_path               | string  | Data directory or S3 Express path            | auto        |
+| cayenne_metadata_dir            | string  | Metadata (SQLite) directory                  | auto        |
+| cayenne_metastore               | string  | Metastore backend (sqlite, turso)            | sqlite      |
+| cayenne_target_file_size_mb     | integer | Target Vortex file size in MB                | 256         |
+| cayenne_compression_strategy    | string  | Compression (btrblocks, zstd)                | btrblocks   |
+| cayenne_footer_cache_mb         | integer | Footer cache size in MB                      | 128         |
+| cayenne_segment_cache_mb        | integer | Segment cache size in MB                     | 256         |
+| cayenne_upload_concurrency      | integer | Concurrent uploads to S3                     | 4           |
+| unsupported_type_action         | string  | Handle unsupported types (string, error)     | string      |
+| sort_columns                    | string  | Comma-separated sort columns                 | -           |
+| cayenne_s3_zone_ids             | string  | Comma-separated S3 Express zone IDs          | -           |
+| cayenne_s3_region               | string  | AWS region for S3 Express                    | -           |
+| cayenne_s3_access_key           | string  | AWS access key (use secrets)                 | -           |
+| cayenne_s3_secret_key           | string  | AWS secret key (use secrets)                 | -           |
+
+## Limitations
+
+- File mode only (no memory mode)
+- No `refresh_append_overlap` support yet
+- Some Arrow data types unsupported by Vortex
+- Metadata stored locally (SQLite)
+
+## Next Steps
+
+- [DuckDB Accelerator](/accelerators/duckdb) - For single-file analytical acceleration
+- [Arrow Accelerator](/accelerators/arrow) - For in-memory speed
+- [Acceleration Overview](/accelerators/overview) - Compare all accelerators
+- [Vortex Format](https://github.com/vortex-data/vortex) - Learn about Vortex columnar format

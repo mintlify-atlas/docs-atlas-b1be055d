@@ -1,0 +1,445 @@
+---
+title: 'ODBC Connectivity'
+description: 'Connect to Spice.ai using ODBC drivers'
+---
+
+Spice.ai supports ODBC (Open Database Connectivity) for connecting business intelligence tools, applications, and database clients to query your data.
+
+## Overview
+
+ODBC provides a standard interface for database connectivity, allowing tools like:
+
+- **BI Tools**: Tableau, Power BI, Looker, Metabase
+- **Database Clients**: DBeaver, DataGrip, SQL Workbench
+- **Applications**: Any application supporting ODBC
+
+## Prerequisites
+
+### ODBC Driver Manager
+
+Install an ODBC driver manager on your system:
+
+#### macOS
+
+```bash
+brew install unixodbc
+```
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+sudo apt-get install unixodbc unixodbc-dev
+```
+
+#### Linux (RHEL/CentOS)
+
+```bash
+sudo yum install unixODBC unixODBC-devel
+```
+
+#### Windows
+
+Windows includes ODBC driver manager by default.
+
+### Arrow Flight SQL ODBC Driver
+
+Spice uses Arrow Flight SQL, which requires a compatible ODBC driver:
+
+1. **Download** the Arrow Flight SQL ODBC driver from [Apache Arrow releases](https://arrow.apache.org/install/)
+2. **Install** the driver on your system
+3. **Register** the driver with your ODBC driver manager
+
+## Connection Configuration
+
+### DSN Configuration
+
+Create a Data Source Name (DSN) for Spice:
+
+#### On macOS/Linux
+
+Edit `/etc/odbc.ini` (system-wide) or `~/.odbc.ini` (user):
+
+```ini
+[Spice]
+Driver = Arrow Flight SQL ODBC Driver
+Host = localhost
+Port = 50051
+UseEncryption = 0
+AuthenticationType = 1
+UID = your-username
+PWD = your-password
+```
+
+#### On Windows
+
+1. Open **ODBC Data Source Administrator**
+2. Click **Add**
+3. Select **Arrow Flight SQL ODBC Driver**
+4. Configure:
+   - **Data Source Name**: Spice
+   - **Host**: localhost
+   - **Port**: 50051
+   - **Authentication**: Username/Password or API Key
+
+### Connection String
+
+Alternatively, use a connection string directly:
+
+```
+Driver={Arrow Flight SQL ODBC Driver};
+Host=localhost;
+Port=50051;
+UseEncryption=0;
+UID=your-username;
+PWD=your-password;
+```
+
+## Default Ports
+
+| Service | Port | Description |
+|---------|------|-------------|
+| HTTP API | 8090 | SQL queries, health checks |
+| Arrow Flight | 50051 | Flight and Flight SQL (ODBC/JDBC) |
+| Metrics | 9090 | Prometheus metrics |
+
+## Authentication
+
+### Username and Password
+
+```ini
+UID=your-username
+PWD=your-password
+```
+
+### API Key (Bearer Token)
+
+```ini
+AuthenticationType=3
+Token=your-api-key
+```
+
+### No Authentication
+
+```ini
+AuthenticationType=0
+```
+
+## Connecting from Applications
+
+### Python (pyodbc)
+
+#### Installation
+
+```bash
+pip install pyodbc
+```
+
+#### Using DSN
+
+```python
+import pyodbc
+
+# Connect using DSN
+conn = pyodbc.connect('DSN=Spice')
+cursor = conn.cursor()
+
+# Execute query
+cursor.execute('SELECT * FROM taxi_trips LIMIT 10')
+for row in cursor.fetchall():
+    print(row)
+
+cursor.close()
+conn.close()
+```
+
+#### Using Connection String
+
+```python
+import pyodbc
+
+conn_str = (
+    'Driver={Arrow Flight SQL ODBC Driver};'
+    'Host=localhost;'
+    'Port=50051;'
+    'UID=username;'
+    'PWD=password'
+)
+
+conn = pyodbc.connect(conn_str)
+cursor = conn.cursor()
+
+cursor.execute('SELECT * FROM taxi_trips LIMIT 10')
+for row in cursor.fetchall():
+    print(row)
+
+cursor.close()
+conn.close()
+```
+
+#### Parameterized Queries
+
+```python
+import pyodbc
+
+conn = pyodbc.connect('DSN=Spice')
+cursor = conn.cursor()
+
+# Parameterized query
+query = 'SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?'
+cursor.execute(query, (2, 10))
+
+for row in cursor.fetchall():
+    print(row)
+
+cursor.close()
+conn.close()
+```
+
+### R (odbc)
+
+#### Installation
+
+```r
+install.packages("odbc")
+install.packages("DBI")
+```
+
+#### Basic Usage
+
+```r
+library(DBI)
+library(odbc)
+
+# Connect using DSN
+con <- dbConnect(odbc::odbc(), "Spice")
+
+# Execute query
+result <- dbGetQuery(con, "SELECT * FROM taxi_trips LIMIT 10")
+print(result)
+
+# Parameterized query
+result <- dbGetQuery(
+  con,
+  "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?",
+  params = list(2, 10)
+)
+
+dbDisconnect(con)
+```
+
+### C# (.NET)
+
+#### Using System.Data.Odbc
+
+```csharp
+using System;
+using System.Data.Odbc;
+
+class Program
+{
+    static void Main()
+    {
+        string connStr = "DSN=Spice";
+        using (OdbcConnection conn = new OdbcConnection(connStr))
+        {
+            conn.Open();
+
+            string sql = "SELECT * FROM taxi_trips LIMIT 10";
+            using (OdbcCommand cmd = new OdbcCommand(sql, conn))
+            using (OdbcDataReader reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    Console.WriteLine(reader[0]);
+                }
+            }
+        }
+    }
+}
+```
+
+#### Parameterized Query
+
+```csharp
+string sql = "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?";
+using (OdbcCommand cmd = new OdbcCommand(sql, conn))
+{
+    cmd.Parameters.Add("@p1", OdbcType.Int).Value = 2;
+    cmd.Parameters.Add("@p2", OdbcType.Int).Value = 10;
+
+    using (OdbcDataReader reader = cmd.ExecuteReader())
+    {
+        while (reader.Read())
+        {
+            Console.WriteLine(reader[0]);
+        }
+    }
+}
+```
+
+## Business Intelligence Tools
+
+### Tableau
+
+1. Open Tableau Desktop
+2. Click **Connect** → **Other Databases (ODBC)**
+3. Select **DSN**: `Spice`
+4. Click **Sign In**
+5. Select tables and build visualizations
+
+### Power BI
+
+1. Open Power BI Desktop
+2. Click **Get Data** → **ODBC**
+3. Select **DSN**: `Spice`
+4. Choose **Import** or **DirectQuery**
+5. Click **OK** and load data
+
+### DBeaver
+
+1. Create new connection
+2. Select **ODBC**
+3. Configure:
+   - **DSN**: Spice
+   - Or use connection string
+4. Test connection
+5. Execute SQL queries
+
+### DataGrip
+
+1. Add new Data Source
+2. Select **ODBC**
+3. Choose DSN: `Spice`
+4. Test connection
+5. Query your data
+
+## Troubleshooting
+
+### Test ODBC Connection
+
+#### macOS/Linux
+
+```bash
+# Test connection
+isql Spice username password
+
+# If successful, you'll see SQL prompt
+SQL> SELECT 1;
+```
+
+#### Windows
+
+Use **ODBC Data Source Administrator** → **Test Connection**
+
+### Common Issues
+
+#### Driver Not Found
+
+**Error**: `[IM002] [unixODBC][Driver Manager]Data source name not found`
+
+**Solution**: Verify driver is installed and registered in `odbcinst.ini`:
+
+```bash
+# List installed drivers
+odbcinst -q -d
+```
+
+#### Connection Refused
+
+**Error**: `Connection refused to localhost:50051`
+
+**Solution**:
+- Verify Spice is running: `spice status`
+- Check Flight port: default is 50051
+- Check firewall settings
+
+#### Authentication Failed
+
+**Error**: `Authentication failed`
+
+**Solution**:
+- Verify username/password or API key
+- Check authentication type in connection string
+- Ensure authentication is configured in Spice runtime
+
+#### SSL/TLS Errors
+
+**Error**: `SSL connection failed`
+
+**Solution**:
+- For local development, set `UseEncryption=0`
+- For production, configure TLS in Spice runtime
+- Verify certificate paths
+
+### Debug Mode
+
+Enable ODBC tracing:
+
+#### macOS/Linux
+
+Edit `~/.odbcinst.ini`:
+
+```ini
+[ODBC]
+Trace = Yes
+TraceFile = /tmp/odbc.log
+```
+
+#### Windows
+
+1. Open **ODBC Data Source Administrator**
+2. Go to **Tracing** tab
+3. Click **Start Tracing Now**
+
+## Performance Optimization
+
+### Batch Fetching
+
+Increase fetch size for better performance:
+
+```python
+import pyodbc
+
+conn = pyodbc.connect('DSN=Spice')
+cursor = conn.cursor()
+
+# Set array size for batch fetching
+cursor.arraysize = 1000
+
+cursor.execute('SELECT * FROM large_table')
+while True:
+    rows = cursor.fetchmany(1000)
+    if not rows:
+        break
+    # Process rows
+```
+
+### Connection Pooling
+
+Reuse connections for better performance:
+
+```python
+import pyodbc
+
+# Enable connection pooling
+pyodbc.pooling = True
+
+# Connections are now pooled
+conn = pyodbc.connect('DSN=Spice')
+```
+
+## Best Practices
+
+1. **Use DSN for easier management** across multiple applications
+2. **Enable connection pooling** for better performance
+3. **Use parameterized queries** to prevent SQL injection
+4. **Batch fetch results** for large datasets
+5. **Close connections** when done to free resources
+6. **Use read-only mode** when possible for BI tools
+
+## Related APIs
+
+- [Arrow Flight SQL API](/api/arrow-flight-sql) - Native Flight SQL protocol
+- [JDBC Connectivity](/api/jdbc) - Java database connectivity
+- [ADBC](/api/adbc) - Arrow Database Connectivity
+- [SQL Query API](/api/sql) - HTTP-based SQL queries

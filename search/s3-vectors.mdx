@@ -1,0 +1,562 @@
+---
+title: 'Amazon S3 Vectors'
+description: 'Petabyte-scale vector storage and search with Amazon S3 Vectors'
+---
+
+Amazon S3 Vectors is a fully-managed vector storage service providing petabyte-scale capacity with millisecond query latency.
+
+## Overview
+
+Amazon S3 Vectors manages the complete vector lifecycle:
+
+1. **Ingestion**: Load data from any source
+2. **Embedding**: Generate vectors using AWS Bedrock, HuggingFace, or Model2Vec
+3. **Storage**: Store vectors in S3 with automatic indexing
+4. **Querying**: Fast similarity search via SQL
+
+Spice provides native integration, handling all aspects automatically.
+
+## Why S3 Vectors?
+
+| Feature | S3 Vectors | In-Memory (pgvector, etc.) |
+|---------|------------|----------------------------|
+| **Scale** | Petabytes | Gigabytes |
+| **Cost** | S3 pricing | Memory cost |
+| **Durability** | 99.999999999% (11 9's) | Database dependent |
+| **Availability** | 99.99% | Database dependent |
+| **Setup** | Serverless | Requires provisioning |
+| **Indexing** | Automatic | Manual tuning |
+
+## Configuration
+
+### Basic Setup
+
+```yaml
+datasets:
+  - name: knowledge_base
+    from: postgres:documents
+    acceleration:
+      enabled: true
+    
+    # S3 Vectors configuration
+    embeddings:
+      - column: content
+        model:
+          from: bedrock
+          name: amazon.titan-embed-text-v2:0
+        
+        # S3 Vectors storage
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: my-vector-bucket
+            index_name: knowledge_base_index
+            aws_region: us-east-1
+```
+
+### With AWS Credentials
+
+```yaml
+datasets:
+  - name: documents
+    embeddings:
+      - column: text
+        model:
+          from: bedrock
+          name: cohere.embed-english-v3
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: ${secrets:s3_bucket}
+            index_name: docs_index
+            aws_region: us-west-2
+            aws_access_key_id: ${secrets:aws_access_key}
+            aws_secret_access_key: ${secrets:aws_secret_key}
+```
+
+### Using IAM Roles
+
+```yaml
+# When running on AWS (EC2, ECS, Lambda)
+datasets:
+  - name: products
+    embeddings:
+      - column: description
+        model:
+          from: bedrock
+          name: amazon.titan-embed-text-v2:0
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: product-vectors
+            index_name: product_descriptions
+            aws_region: us-east-1
+            # IAM role credentials used automatically
+```
+
+## Embedding Models
+
+### AWS Bedrock
+
+```yaml
+embeddings:
+  - column: content
+    model:
+      from: bedrock
+      name: amazon.titan-embed-text-v2:0  # 1024 dimensions
+      # name: cohere.embed-english-v3      # 1024 dimensions
+      # name: cohere.embed-multilingual-v3 # 1024 dimensions
+    vector_store:
+      name: s3_vectors
+      params:
+        bucket_name: my-vectors
+        index_name: content_index
+        aws_region: us-east-1
+```
+
+### HuggingFace Models
+
+```yaml
+embeddings:
+  - column: text
+    model:
+      from: huggingface
+      name: sentence-transformers/all-MiniLM-L6-v2  # 384 dimensions
+    vector_store:
+      name: s3_vectors
+      params:
+        bucket_name: vectors-hf
+        index_name: text_index
+        aws_region: us-east-1
+```
+
+### Model2Vec (Fast Static Embeddings)
+
+500x faster than traditional models:
+
+```yaml
+embeddings:
+  - column: title
+    model:
+      from: model2vec
+      name: minishlab/M2V_base_output  # 256 dimensions
+    vector_store:
+      name: s3_vectors
+      params:
+        bucket_name: fast-vectors
+        index_name: titles
+        aws_region: us-east-1
+```
+
+## Querying S3 Vectors
+
+Use the `vector_search()` UDTF:
+
+```sql
+-- Basic search
+SELECT * FROM vector_search(
+  knowledge_base,
+  'how to configure authentication'
+);
+
+-- With limit and filtering
+SELECT 
+  id,
+  title,
+  content,
+  _score
+FROM vector_search(documents, 'machine learning', limit => 20)
+WHERE category = 'technical'
+  AND _score > 0.7
+ORDER BY _score DESC;
+
+-- Multi-column search
+SELECT * FROM vector_search(
+  products,
+  'wireless bluetooth headphones',
+  description,  -- Search this column
+  limit => 10
+);
+```
+
+## Distance Metrics
+
+Configure the similarity metric:
+
+### Cosine Similarity (Default)
+
+Best for text embeddings:
+
+```yaml
+embeddings:
+  - column: content
+    model:
+      from: bedrock
+      name: amazon.titan-embed-text-v2:0
+    vector_store:
+      name: s3_vectors
+      params:
+        bucket_name: vectors
+        index_name: content
+        distance_metric: cosine  # default
+```
+
+### Euclidean Distance
+
+For spatial or geometric data:
+
+```yaml
+embeddings:
+  - column: features
+    vector_store:
+      params:
+        distance_metric: euclidean
+```
+
+### Dot Product
+
+For raw similarity:
+
+```yaml
+embeddings:
+  - column: embeddings
+    vector_store:
+      params:
+        distance_metric: dot_product
+```
+
+## Partitioning
+
+Partition large datasets for better performance:
+
+```yaml
+datasets:
+  - name: global_documents
+    embeddings:
+      - column: content
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: vectors
+            index_name: docs
+        
+        # Partition by region
+        partition_by:
+          - region
+```
+
+Creates separate indexes per partition:
+- `docs_partition_region_us`
+- `docs_partition_region_eu`
+- `docs_partition_region_asia`
+
+Queries automatically use the correct partition.
+
+## Metadata Columns
+
+Store additional columns with vectors for filtering:
+
+```yaml
+datasets:
+  - name: articles
+    embeddings:
+      - column: content
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: vectors
+            index_name: articles
+        
+        # Include metadata
+        metadata_columns:
+          - category
+          - author_id
+          - publish_date
+          - tags
+```
+
+Filter on metadata:
+
+```sql
+SELECT * FROM vector_search(articles, 'kubernetes deployment')
+WHERE category = 'devops'
+  AND publish_date > '2024-01-01';
+```
+
+## Chunking
+
+Split large text into searchable chunks:
+
+```yaml
+datasets:
+  - name: documentation
+    embeddings:
+      - column: content
+        chunking:
+          enabled: true
+          target_chunk_size: 512    # characters
+          overlap: 50               # overlap between chunks
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: docs-vectors
+            index_name: doc_chunks
+```
+
+Chunked searches return `_match` with the matched text:
+
+```sql
+SELECT 
+  document_id,
+  title,
+  _match as matched_chunk,
+  _score
+FROM vector_search(documentation, 'API authentication')
+ORDER BY _score DESC;
+```
+
+## Data Lifecycle
+
+### Initial Load
+
+```bash
+# Spice loads data and generates embeddings
+$ spice run
+2024-01-20T10:30:00.000Z  INFO Loading dataset knowledge_base
+2024-01-20T10:30:05.123Z  INFO Generating embeddings for column: content
+2024-01-20T10:30:15.456Z  INFO Writing vectors to S3: s3://my-vectors/knowledge_base_index
+2024-01-20T10:30:30.789Z  INFO Loaded 50,000 documents
+```
+
+### Incremental Updates
+
+Spice automatically handles updates:
+
+```yaml
+datasets:
+  - name: knowledge_base
+    refresh_mode: full  # or: append
+    refresh_check_interval: 1h
+```
+
+New/changed documents are embedded and indexed automatically.
+
+### Spill Writes
+
+For large datasets, enable spill writes for resilience:
+
+```yaml
+datasets:
+  - name: large_dataset
+    embeddings:
+      - column: content
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: vectors
+            index_name: large
+            enable_spill_writes: true
+```
+
+Spill writes create recovery points during long-running ingestion.
+
+## Performance
+
+### Query Latency
+
+Typical latency:
+- **< 10ms**: Small indexes (< 100K vectors)
+- **10-50ms**: Medium indexes (100K - 1M vectors)
+- **50-200ms**: Large indexes (> 1M vectors)
+
+### Optimization Tips
+
+1. **Use partitioning**: Split large datasets by tenant, region, etc.
+2. **Add metadata filters**: Pre-filter before vector search
+3. **Limit results**: Use the `limit` parameter in `vector_search()`
+4. **Choose efficient models**: Model2Vec is 500x faster than BERT
+5. **Right-size dimensions**: 384 dims often sufficient, not 1536
+
+## Cost Optimization
+
+### Storage Costs
+
+S3 Standard pricing for vector storage:
+- First 50 TB: $0.023 per GB
+- Next 450 TB: $0.022 per GB
+
+### Request Costs
+
+- **PUT requests**: Embedding generation and ingestion
+- **GET requests**: Vector similarity queries
+- **Data transfer**: Egress charges apply
+
+### Optimization Strategies
+
+1. **Smaller dimensions**: 384 vs 1536 = 75% storage savings
+2. **Selective embedding**: Only embed fields you'll search
+3. **Batch ingestion**: Reduce PUT request counts
+4. **Cache frequent queries**: Use Spice's query result cache
+
+## Examples
+
+### RAG Knowledge Base
+
+```yaml
+datasets:
+  - name: knowledge_base
+    from: postgres:documents
+    embeddings:
+      - column: content
+        model:
+          from: bedrock
+          name: amazon.titan-embed-text-v2:0
+        chunking:
+          enabled: true
+          target_chunk_size: 512
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: rag-vectors
+            index_name: kb_content
+            aws_region: us-east-1
+        metadata_columns:
+          - title
+          - category
+          - source_url
+```
+
+```sql
+-- Query for RAG context
+SELECT 
+  title,
+  _match as context,
+  source_url,
+  _score
+FROM vector_search(knowledge_base, 'how to deploy with docker')
+WHERE _score > 0.6
+ORDER BY _score DESC
+LIMIT 3;
+```
+
+### Multi-Tenant SaaS
+
+```yaml
+datasets:
+  - name: tenant_documents
+    from: postgres:documents
+    embeddings:
+      - column: content
+        model:
+          from: model2vec
+          name: minishlab/M2V_base_output
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: saas-vectors
+            index_name: docs
+        partition_by:
+          - tenant_id
+        metadata_columns:
+          - tenant_id
+          - doc_type
+```
+
+```sql
+-- Query for specific tenant
+SELECT * FROM vector_search(tenant_documents, 'user query')
+WHERE tenant_id = 'acme-corp';
+```
+
+### E-commerce Product Search
+
+```yaml
+datasets:
+  - name: products
+    from: mysql:products
+    embeddings:
+      - column: description
+        model:
+          from: openai
+          name: text-embedding-3-small
+        vector_store:
+          name: s3_vectors
+          params:
+            bucket_name: product-vectors
+            index_name: descriptions
+        metadata_columns:
+          - category
+          - brand
+          - price
+          - in_stock
+```
+
+```sql
+-- Semantic product search
+SELECT 
+  product_id,
+  name,
+  price,
+  _score
+FROM vector_search(products, 'noise cancelling over-ear headphones')
+WHERE in_stock = true
+  AND price < 200
+ORDER BY _score DESC
+LIMIT 10;
+```
+
+## Troubleshooting
+
+### S3 Access Denied
+
+```
+Error: Access Denied to S3 bucket: my-vectors
+```
+
+**Solution**: Ensure IAM permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-vectors",
+        "arn:aws:s3:::my-vectors/*"
+      ]
+    }
+  ]
+}
+```
+
+### Bedrock Embedding Errors
+
+```
+Error: Failed to generate embeddings: Bedrock model not found
+```
+
+**Solution**: Verify model access in AWS Bedrock console and region.
+
+### Slow Ingestion
+
+- Use Model2Vec for 500x faster embedding generation
+- Enable spill writes for large datasets
+- Increase batch write size in params
+
+### High Costs
+
+- Reduce embedding dimensions
+- Use Model2Vec instead of Bedrock
+- Enable S3 Intelligent-Tiering for storage
+
+## See Also
+
+- [Vector Search](/search/vector-search) - Vector search UDTF reference
+- [Hybrid Search](/search/hybrid-search) - Combine with text search
+- [AWS Bedrock Models](https://aws.amazon.com/bedrock/) - Embedding model options

@@ -1,0 +1,210 @@
+---
+title: 'AI & ML Overview'
+description: 'AI and machine learning capabilities in Spice.ai'
+---
+
+Spice.ai provides a unified runtime for both data query and AI inference, making it the ideal foundation for data-grounded AI applications and intelligent agents.
+
+## Key Capabilities
+
+Spice combines four industry-standard APIs for building AI applications:
+
+1. **OpenAI-Compatible APIs** - HTTP APIs for chat completions and embeddings with SDK compatibility
+2. **Local Model Serving** - Run LLMs and embedding models locally with hardware acceleration
+3. **Model Gateway** - Connect to hosted providers (OpenAI, Anthropic, xAI, AWS Bedrock, Azure)
+4. **MCP Integration** - Tool/function calling via Model Context Protocol (MCP) using HTTP+SSE
+
+## Architecture
+
+Spice's AI-native architecture provides:
+
+- **Unified Data + AI Runtime**: Query data and run inference in a single engine
+- **OpenAI SDK Compatibility**: Drop-in replacement for OpenAI client libraries
+- **Hardware Acceleration**: CUDA and Metal support for local model inference
+- **Vector Search Integration**: Native support for RAG workflows with vector similarity search
+- **Flexible Deployment**: Run as sidecar, microservice, or cluster from edge to cloud
+
+## Use Cases
+
+### Retrieval-Augmented Generation (RAG)
+
+Combine vector similarity search with LLM inference for context-aware responses:
+
+```sql
+SELECT content, _score
+FROM vector_search(documents, 'machine learning algorithms', 10)
+WHERE category = 'technical'
+ORDER BY _score DESC;
+```
+
+Learn more: [RAG Documentation](/ai/rag)
+
+### Text-to-SQL (NSQL)
+
+Convert natural language queries into SQL using built-in prompt templates:
+
+```bash
+spice sql
+sql> nsql "show me the top 10 customers by revenue"
+```
+
+### AI Agents with Tools
+
+Build intelligent agents with function calling via MCP:
+
+```yaml
+models:
+  - from: openai:gpt-4o-mini
+    name: my-agent
+    params:
+      openai_api_key: ${secrets:openai_key}
+
+tools:
+  - from: mcp:http://localhost:3000
+    name: database-tools
+```
+
+Learn more: [MCP Integration](/ai/mcp-integration)
+
+### Embeddings Pipeline
+
+Generate embeddings at scale for semantic search:
+
+```yaml
+columns:
+  - name: description
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+```
+
+Learn more: [Embeddings](/ai/embeddings)
+
+## Model Lifecycle
+
+Spice manages the complete model lifecycle:
+
+1. **Model Loading**: Automatic download from HuggingFace, local filesystem, or Spice.ai Cloud
+2. **Format Support**: GGUF, GGML, SafeTensor for LLMs; ONNX and Model2Vec for embeddings
+3. **Hardware Acceleration**: Automatic CUDA/Metal detection and utilization
+4. **Rate Limiting**: Built-in rate controllers for API providers
+5. **Caching**: Request and result caching for improved performance
+
+## Supported Providers
+
+### LLM Providers
+
+- **OpenAI** - GPT-4, GPT-4o, GPT-3.5-turbo models
+- **Anthropic** - Claude 3 Opus, Sonnet, Haiku models
+- **xAI** - Grok models
+- **AWS Bedrock** - Amazon Nova, Anthropic Claude via Bedrock
+- **Azure OpenAI** - Azure-hosted OpenAI models
+- **Local Models** - GGUF/GGML/SafeTensor formats with llama.cpp acceleration
+
+### Embedding Providers
+
+- **OpenAI** - text-embedding-3-small, text-embedding-3-large
+- **AWS Bedrock** - Amazon Titan, Cohere embeddings
+- **HuggingFace** - Any ONNX-compatible embedding model
+- **Model2Vec** - 500x faster static embeddings
+- **Local Models** - ONNX format with hardware acceleration
+
+## Getting Started
+
+### 1. Configure a Model
+
+Add a model to your `spicepod.yaml`:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my-app
+
+models:
+  - from: openai:gpt-4o-mini
+    name: chat-model
+    params:
+      openai_api_key: ${secrets:openai_key}
+
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding
+    params:
+      openai_api_key: ${secrets:openai_key}
+```
+
+### 2. Start Spice Runtime
+
+```bash
+spice run
+```
+
+### 3. Query with OpenAI SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="not-needed"  # Spice handles auth
+)
+
+# Chat completion
+response = client.chat.completions.create(
+    model="chat-model",
+    messages=[
+        {"role": "user", "content": "Explain RAG in one sentence"}
+    ]
+)
+
+print(response.choices[0].message.content)
+
+# Generate embeddings
+embedding = client.embeddings.create(
+    model="text-embedding",
+    input="machine learning algorithms"
+)
+
+print(embedding.data[0].embedding)
+```
+
+## Performance Considerations
+
+### Local Model Serving
+
+- **CUDA Acceleration**: Automatic GPU utilization on NVIDIA hardware
+- **Metal Acceleration**: Optimized for Apple Silicon (M1/M2/M3)
+- **Memory Management**: Models loaded on-demand, unloaded when idle
+- **Batch Processing**: Automatic request batching for throughput optimization
+
+### Model2Vec Embeddings
+
+For embedding-intensive workloads, Model2Vec provides:
+
+- **500x Faster**: Static embeddings vs. transformer models
+- **Lower Memory**: Minimal memory footprint
+- **CPU-Optimized**: Efficient on CPU without GPU requirements
+
+```yaml
+embeddings:
+  - from: model2vec:minishlab/potion-base-8M
+    name: fast-embed
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="OpenAI Compatibility" icon="code" href="/ai/openai-compatibility">
+    Learn about OpenAI-compatible APIs and endpoints
+  </Card>
+  <Card title="Model Providers" icon="server" href="/ai/model-providers">
+    Configure hosted and local model providers
+  </Card>
+  <Card title="Embeddings" icon="vector-square" href="/ai/embeddings">
+    Generate embeddings for semantic search
+  </Card>
+  <Card title="RAG" icon="magnifying-glass" href="/ai/rag">
+    Build retrieval-augmented generation workflows
+  </Card>
+</CardGroup>

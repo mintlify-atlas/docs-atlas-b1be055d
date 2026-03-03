@@ -1,0 +1,361 @@
+---
+title: 'DuckDB Data Connector'
+description: 'Connect Spice to DuckDB databases for federated SQL queries'
+---
+
+The DuckDB connector enables Spice to query DuckDB databases (both file-based and in-memory) with full SQL push-down support and bidirectional data operations.
+
+## Status
+
+**Stable** - Production-ready with comprehensive testing
+
+## Supported Features
+
+- Full SQL query push-down
+- Embedded DuckDB engine
+- File-based and in-memory databases
+- Read and write operations
+- DELETE operations with transaction support
+- Data acceleration
+- Native Arrow integration
+- Extensions support
+
+## Configuration
+
+### File-Based Database
+
+```yaml
+version: v1
+kind: Spicepod
+name: duckdb-demo
+
+datasets:
+  - from: duckdb:my_table
+    name: my_table
+    params:
+      duckdb_open: ./data/my_database.db
+```
+
+### In-Memory Database
+
+```yaml
+datasets:
+  - from: duckdb:analytics
+    name: analytics
+    params:
+      duckdb_open: :memory:
+```
+
+### Multiple Tables
+
+```yaml
+datasets:
+  - from: duckdb:catalog_sales
+    name: catalog_sales
+    params: &duckdb_params
+      duckdb_open: ./data/tpcds.db
+
+  - from: duckdb:customer
+    name: customer
+    params: *duckdb_params
+
+  - from: duckdb:store_sales
+    name: store_sales
+    params: *duckdb_params
+```
+
+### With Write Support
+
+```yaml
+datasets:
+  - from: duckdb:output_table
+    name: output_table
+    params:
+      duckdb_open: ./data/output.db
+    mode: readwrite  # Enable writes
+```
+
+### As an Accelerator
+
+DuckDB can also be used as an acceleration engine:
+
+```yaml
+datasets:
+  - from: postgres:public.large_table
+    name: large_table
+    params:
+      pg_host: postgres.internal
+      pg_db: warehouse
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file  # or memory
+      refresh_interval: 5m
+```
+
+## Parameters
+
+<ParamField path="duckdb_open" type="string" required>
+  Path to DuckDB database file or `:memory:` for in-memory database
+</ParamField>
+
+<ParamField path="duckdb_readonly" type="boolean" default="false">
+  Open database in read-only mode
+</ParamField>
+
+<ParamField path="duckdb_threads" type="integer">
+  Number of threads for query execution (default: number of CPU cores)
+</ParamField>
+
+<ParamField path="duckdb_memory_limit" type="string">
+  Memory limit for DuckDB (e.g., `4GB`, `512MB`)
+</ParamField>
+
+<ParamField path="duckdb_extensions" type="array">
+  List of DuckDB extensions to load (e.g., `parquet`, `json`, `httpfs`)
+</ParamField>
+
+## Use Cases
+
+### Local Analytics Database
+
+```yaml
+datasets:
+  - from: duckdb:sales_data
+    name: sales
+    params:
+      duckdb_open: ./analytics/sales.duckdb
+```
+
+Query local DuckDB:
+
+```sql
+SELECT 
+  product_category,
+  SUM(revenue) as total_revenue,
+  AVG(profit_margin) as avg_margin
+FROM sales
+WHERE sale_date >= '2024-01-01'
+GROUP BY product_category
+ORDER BY total_revenue DESC;
+```
+
+### Data Processing Pipeline
+
+```yaml
+datasets:
+  # Read from S3
+  - from: s3://raw-data/events/*.parquet
+    name: raw_events
+    params:
+      file_format: parquet
+
+  # Write to DuckDB for processing
+  - from: duckdb:processed_events
+    name: processed_events
+    params:
+      duckdb_open: ./processing/events.db
+    mode: readwrite
+```
+
+Process and store:
+
+```sql
+-- Insert processed data into DuckDB
+INSERT INTO processed_events
+SELECT 
+  event_id,
+  user_id,
+  event_type,
+  DATE_TRUNC('hour', timestamp) as event_hour,
+  properties
+FROM raw_events
+WHERE event_type IN ('click', 'purchase');
+```
+
+### Temporary In-Memory Analysis
+
+```yaml
+datasets:
+  - from: postgres:public.transactions
+    name: transactions
+    params:
+      pg_host: prod-db.internal
+      pg_db: finance
+      pg_user: analyst
+      pg_pass: ${secrets:pg_password}
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: memory  # Fast in-memory processing
+      refresh_interval: 1m
+```
+
+Fast analytical queries:
+
+```sql
+-- Complex aggregation runs on accelerated DuckDB
+SELECT 
+  DATE_TRUNC('day', transaction_date) as day,
+  merchant_category,
+  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount) as median_amount,
+  PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY amount) as p95_amount,
+  COUNT(*) as transaction_count
+FROM transactions
+WHERE transaction_date >= CURRENT_DATE - INTERVAL '30' DAY
+GROUP BY day, merchant_category
+ORDER BY day DESC, transaction_count DESC;
+```
+
+### Multi-Source Federation with DuckDB
+
+```yaml
+datasets:
+  # DuckDB local cache
+  - from: duckdb:customer_cache
+    name: customers
+    params:
+      duckdb_open: ./cache/customers.db
+
+  # PostgreSQL orders
+  - from: postgres:public.orders
+    name: orders
+    params:
+      pg_host: postgres.internal
+      pg_db: orders
+      pg_user: app
+      pg_pass: ${secrets:pg_password}
+
+  # S3 product catalog
+  - from: s3://catalog/products.parquet
+    name: products
+    params:
+      file_format: parquet
+```
+
+Join across sources:
+
+```sql
+SELECT 
+  c.name as customer_name,
+  p.name as product_name,
+  o.order_date,
+  o.quantity,
+  o.total_amount
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+JOIN products p ON o.product_id = p.id
+WHERE o.order_date >= CURRENT_DATE - INTERVAL '7' DAY
+ORDER BY o.order_date DESC;
+```
+
+### Delete Operations
+
+```yaml
+datasets:
+  - from: duckdb:audit_log
+    name: audit_log
+    params:
+      duckdb_open: ./logs/audit.db
+    mode: readwrite
+```
+
+Delete old records:
+
+```sql
+-- Delete records older than 90 days
+DELETE FROM audit_log 
+WHERE log_date < CURRENT_DATE - INTERVAL '90' DAY;
+```
+
+## Performance Tips
+
+1. **File vs Memory Mode**:
+   - Use `file` mode for large datasets that exceed memory
+   - Use `memory` mode for fastest queries on smaller datasets
+
+2. **Threading**: DuckDB automatically uses all CPU cores; adjust with `duckdb_threads` if needed
+
+3. **Memory Management**: Set `duckdb_memory_limit` to prevent OOM on large queries
+
+4. **Acceleration**: DuckDB is an excellent acceleration engine for other connectors
+
+5. **Extensions**: Load only required extensions to minimize overhead
+
+## DuckDB as Accelerator
+
+DuckDB provides high-performance acceleration with two modes:
+
+### Memory Mode
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: memory
+  refresh_interval: 5m
+```
+
+- Fastest queries (pure in-memory)
+- Limited by available RAM
+- Best for frequently accessed smaller datasets
+
+### File Mode
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+  refresh_interval: 1h
+```
+
+- Larger-than-memory datasets
+- Persistent across restarts
+- Excellent compression
+- Best for large analytical datasets
+
+## Extensions
+
+DuckDB supports many extensions:
+
+```yaml
+params:
+  duckdb_open: ./data/extended.db
+  duckdb_extensions:
+    - parquet
+    - json
+    - httpfs
+    - spatial
+```
+
+Common extensions:
+- `parquet`: Parquet file support
+- `json`: JSON processing
+- `httpfs`: HTTP(S) file access
+- `spatial`: Geospatial functions
+- `fts`: Full-text search
+
+## Data Type Support
+
+DuckDB has excellent Arrow integration with native support for:
+- All numeric types
+- Strings (UTF-8)
+- Dates and timestamps
+- Lists and structs
+- NULL handling
+
+## Limitations
+
+- File-based databases support concurrent reads but single writer
+- Very large datasets (>100GB) may require careful memory management
+- Some PostgreSQL-specific features not supported
+
+## Related Resources
+
+- [DuckDB Documentation](https://duckdb.org/docs/)
+- [DuckDB Extensions](https://duckdb.org/docs/extensions/overview)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators/duckdb)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)

@@ -1,0 +1,346 @@
+---
+title: 'spice dataset'
+description: 'Configure and manage datasets'
+---
+
+The `spice dataset` command provides subcommands for configuring datasets in your Spice app.
+
+## Usage
+
+```bash
+spice dataset <SUBCOMMAND>
+```
+
+## Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `configure` | Interactively configure a new dataset |
+
+---
+
+## spice dataset configure
+
+Interactively create a new dataset configuration with prompts for common settings.
+
+### Usage
+
+```bash
+spice dataset configure
+```
+
+### Requirements
+
+Must be run in a directory with an existing `spicepod.yaml` file. Initialize first if needed:
+
+```bash
+spice init
+spice dataset configure
+```
+
+### Interactive Prompts
+
+The command prompts for:
+
+| Prompt | Default | Description |
+|--------|---------|-------------|
+| `dataset name` | Current directory name | Dataset identifier (letters, numbers, `_`, `-`) |
+| `description` | (none) | Human-readable description |
+| `from` | (none) | Data source (e.g., `postgres:table`, `s3://bucket/file.parquet`) |
+| `endpoint` | (none) | Endpoint URL (for Dremio/Databricks) |
+| `file_format` | `parquet` | File format: `parquet` or `csv` (for S3/FTP/SFTP) |
+| `locally accelerate (y/n)?` | `y` | Enable local acceleration |
+
+### Data Source Formats
+
+#### Relational Databases
+
+```
+postgres:my_table
+mysql:my_table
+clickhouse:my_table
+```
+
+#### File Systems
+
+```
+s3://bucket/path/to/data.parquet
+s3://bucket/prefix/
+ftp://host/path/to/file.csv
+sftp://host/path/to/file.csv
+```
+
+#### Data Platforms
+
+```
+dremio:space.folder.dataset
+databricks:catalog.schema.table
+snowflake:database.schema.table
+```
+
+### Generated Files
+
+The command creates:
+
+1. **Directory:** `datasets/<dataset_name>/` (permissions: `0700`)
+2. **File:** `datasets/<dataset_name>/dataset.yaml` (permissions: `0600`)
+3. **Updates:** `spicepod.yaml` with dataset reference
+
+### Example
+
+```bash
+spice dataset configure
+```
+
+**Interactive session:**
+```
+dataset name: (my_project) users
+description: User accounts table
+from: postgres:users
+locally accelerate (y/n)? (y) y
+Saved datasets/users/dataset.yaml
+```
+
+**Generated dataset.yaml:**
+```yaml
+from: postgres:users
+name: users
+description: User accounts table
+acceleration:
+  enabled: true
+  refresh_check_interval: 10s
+  refresh_mode: full
+```
+
+**Updated spicepod.yaml:**
+```yaml
+version: v2
+kind: Spicepod
+name: my_project
+
+datasets:
+  - ref: datasets/users  # Added by spice dataset configure
+```
+
+### S3 Dataset Example
+
+```bash
+spice dataset configure
+```
+
+**Interactive session:**
+```
+dataset name: (my_project) sales_data
+description: Monthly sales reports
+from: s3://my-bucket/sales/
+file_format (parquet/csv): (parquet) parquet
+locally accelerate (y/n)? (y) y
+Saved datasets/sales_data/dataset.yaml
+```
+
+**Generated dataset.yaml:**
+```yaml
+from: s3://my-bucket/sales/
+name: sales_data
+description: Monthly sales reports
+params:
+  file_format: parquet
+acceleration:
+  enabled: true
+  refresh_check_interval: 10s
+  refresh_mode: full
+```
+
+### Dremio Dataset Example
+
+```bash
+spice dataset configure
+```
+
+**Interactive session:**
+```
+dataset name: (my_project) analytics
+description: Analytics dataset from Dremio
+from: dremio:Samples."NYC-taxi-trips"
+endpoint: https://dremio.example.com
+locally accelerate (y/n)? (y) n
+Saved datasets/analytics/dataset.yaml
+```
+
+**Generated dataset.yaml:**
+```yaml
+from: dremio:Samples."NYC-taxi-trips"
+name: analytics
+description: Analytics dataset from Dremio
+params:
+  dremio_endpoint: https://dremio.example.com
+```
+
+## Dataset Name Validation
+
+### Valid Names
+
+- Letters (a-z, A-Z)
+- Numbers (0-9)
+- Underscores (`_`)
+- Hyphens (`-`)
+
+### Invalid Names
+
+- Spaces
+- Special characters (`.`, `/`, `@`, etc.)
+- Empty string
+
+### Hyphen Deprecation Warning
+
+Dataset names with hyphens are deprecated:
+
+```bash
+spice dataset configure
+```
+
+**Input:**
+```
+dataset name: my-dataset
+```
+
+**Warning:**
+```
+Dataset names containing hyphens (-) are deprecated and will no longer be supported starting with version 2.0.
+Dataset names with hyphens should be quoted in queries:
+i.e. SELECT * FROM "my-dataset"
+```
+
+Use underscores instead:
+
+```
+dataset name: my_dataset
+```
+
+## Acceleration Options
+
+When acceleration is enabled, datasets are cached locally for faster queries:
+
+```yaml
+acceleration:
+  enabled: true
+  refresh_check_interval: 10s  # How often to check for updates
+  refresh_mode: full            # full | append
+```
+
+### Refresh Modes
+
+- **full:** Re-fetch entire dataset on refresh
+- **append:** Only fetch new/changed data (supports time-based columns)
+
+### Disabling Acceleration
+
+```
+locally accelerate (y/n)? n
+```
+
+Queries will federate to the source system:
+
+```yaml
+from: postgres:users
+name: users
+description: User accounts table
+```
+
+## File Permissions
+
+The command creates files with restrictive permissions:
+
+- **Directories:** `0700` (rwx------) - Owner only
+- **Files:** `0600` (rw-------) - Owner only
+
+This protects dataset configurations that may contain connection details.
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success - Dataset configured |
+| `1` | Error - No `spicepod.yaml`, invalid input, or file write error |
+
+## Error Messages
+
+### No spicepod.yaml
+
+```bash
+spice dataset configure
+```
+
+**Output:**
+```
+Error: No spicepod.yaml found. Run 'spice init <app>' first.
+```
+
+Solution:
+
+```bash
+spice init
+spice dataset configure
+```
+
+### Invalid Dataset Name
+
+```
+Error: Dataset name can only contain letters, numbers, underscores, and hyphens
+```
+
+Use valid characters only.
+
+### Invalid File Format
+
+```
+Error: file_format must be either 'parquet' or 'csv'
+```
+
+Enter `parquet` or `csv` when prompted.
+
+## Manual Configuration
+
+You can also create dataset files manually:
+
+```bash
+mkdir -p datasets/my_dataset
+```
+
+**datasets/my_dataset/dataset.yaml:**
+```yaml
+from: postgres:my_table
+name: my_dataset
+description: My dataset
+params:
+  postgres_connection_string: ${POSTGRES_CONN}
+acceleration:
+  enabled: true
+  refresh_check_interval: 30s
+  refresh_mode: append
+  refresh_sql: SELECT * FROM my_table WHERE updated_at > ${last_refresh}
+```
+
+Update `spicepod.yaml`:
+
+```yaml
+datasets:
+  - ref: datasets/my_dataset
+```
+
+## Related Commands
+
+- [`spice init`](/cli/init) - Initialize a Spice app
+- [`spice run`](/cli/run) - Run with datasets loaded
+- [`spice sql`](/cli/sql) - Query configured datasets
+
+## Supported Data Connectors
+
+- **Databases:** PostgreSQL, MySQL, SQLite, ClickHouse, DuckDB, SQL Server
+- **Data Warehouses:** Snowflake, Databricks, BigQuery, Redshift
+- **Data Lakes:** Delta Lake, Iceberg
+- **File Systems:** S3, FTP, SFTP, Local Files
+- **APIs:** Dremio, GitHub, Shopify
+- **Streams:** Apache Kafka, Debezium
+
+See [Data Connectors](https://spiceai.org/docs/components/data-connectors) for full list.

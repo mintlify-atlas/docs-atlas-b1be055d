@@ -1,0 +1,433 @@
+---
+title: "Apache Iceberg REST Catalog API"
+description: "Query and write to Iceberg tables using Spice's REST Catalog API"
+---
+
+Spice provides a unified **Apache Iceberg REST Catalog API** that exposes your federated data sources through the standard Iceberg REST protocol. This enables seamless integration with Iceberg-compatible tools while leveraging Spice's query federation and acceleration capabilities.
+
+## Overview
+
+The Iceberg REST Catalog API allows you to:
+
+- **Query Iceberg tables** using standard Iceberg clients (Spark, Trino, Flink, etc.)
+- **Write data to Iceberg tables** using `INSERT INTO` SQL statements (no Spark required)
+- **Federate across data sources** by exposing any Spice dataset as an Iceberg table
+- **Accelerate Iceberg queries** using Spice's data acceleration engines (Arrow, DuckDB, Cayenne)
+
+<Note>
+The Iceberg REST Catalog API is available at `/v1/iceberg` and follows the [Apache Iceberg REST Catalog specification](https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml).
+</Note>
+
+## Architecture
+
+Spice maps its internal catalog structure to Iceberg namespaces:
+
+- **Catalog** → Iceberg namespace (level 1)
+- **Schema** → Iceberg namespace (level 2)
+- **Table** → Iceberg table
+
+For example, a table at `spice.public.users` becomes:
+- Namespace: `["spice", "public"]`
+- Table: `users`
+
+## API Endpoints
+
+### Get API Configuration
+
+```http
+GET /v1/iceberg/config
+```
+
+Returns the Iceberg Catalog API configuration, including available endpoints.
+
+**Response:**
+```json
+{
+  "overrides": {},
+  "defaults": {},
+  "endpoints": [
+    "GET /v1/iceberg/namespaces",
+    "HEAD /v1/iceberg/namespaces/{namespace}",
+    "GET /v1/iceberg/namespaces/{namespace}/tables",
+    "HEAD /v1/iceberg/namespaces/{namespace}/tables/{table}",
+    "GET /v1/iceberg/namespaces/{namespace}/tables/{table}"
+  ]
+}
+```
+
+### List Namespaces
+
+```http
+GET /v1/iceberg/namespaces?parent={namespace}
+```
+
+Lists available namespaces (catalogs and schemas).
+
+**Query Parameters:**
+- `parent` (optional): Parent namespace to list children from. URL-encoded using `\u001F` as separator.
+
+**Examples:**
+
+```bash
+# List all catalogs
+curl http://localhost:8090/v1/iceberg/namespaces
+
+# List schemas in a catalog
+curl 'http://localhost:8090/v1/iceberg/namespaces?parent=spice'
+```
+
+**Response:**
+```json
+{
+  "namespaces": [
+    ["catalog_a"],
+    ["catalog_b"]
+  ]
+}
+```
+
+### Check Namespace Exists
+
+```http
+HEAD /v1/iceberg/namespaces/{namespace}
+GET /v1/iceberg/namespaces/{namespace}
+```
+
+Verifies if a namespace exists. Returns `200 OK` if exists, `404 Not Found` otherwise.
+
+**Example:**
+```bash
+curl -I http://localhost:8090/v1/iceberg/namespaces/spice%1Fpublic
+```
+
+### List Tables in Namespace
+
+```http
+GET /v1/iceberg/namespaces/{namespace}/tables
+```
+
+Lists all tables in the specified namespace.
+
+**Example:**
+```bash
+# List tables in spice.public schema
+curl http://localhost:8090/v1/iceberg/namespaces/spice%1Fpublic/tables
+```
+
+**Response:**
+```json
+{
+  "identifiers": [
+    {
+      "namespace": ["spice", "public"],
+      "name": "users"
+    },
+    {
+      "namespace": ["spice", "public"],
+      "name": "orders"
+    }
+  ]
+}
+```
+
+### Get Table Metadata
+
+```http
+GET /v1/iceberg/namespaces/{namespace}/tables/{table}
+HEAD /v1/iceberg/namespaces/{namespace}/tables/{table}
+```
+
+Retrieves table metadata including schema, partition specs, and sort orders.
+
+**Example:**
+```bash
+curl http://localhost:8090/v1/iceberg/namespaces/spice%1Fpublic/tables/users
+```
+
+**Response:**
+```json
+{
+  "metadata": {
+    "format-version": 2,
+    "table-uuid": "2b9da507-2c07-4bb3-9f0b-8df66a5e9e53",
+    "location": "spice.ai/spice.public.users",
+    "schemas": [
+      {
+        "type": "struct",
+        "schema-id": 0,
+        "fields": [
+          {
+            "id": 0,
+            "name": "id",
+            "required": true,
+            "type": "long"
+          },
+          {
+            "id": 1,
+            "name": "name",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      }
+    ],
+    "current-schema-id": 0,
+    "partition-specs": [],
+    "default-spec-id": 0,
+    "sort-orders": [
+      {
+        "order-id": 0,
+        "fields": []
+      }
+    ],
+    "default-sort-order-id": 0
+  }
+}
+```
+
+## Writing to Iceberg Tables
+
+Spice supports writing to Iceberg tables using standard SQL `INSERT INTO` statements—no Spark required.
+
+### Prerequisites
+
+To write to Iceberg tables, you need:
+
+1. An Iceberg catalog configured in your `spicepod.yaml`
+2. The `iceberg-write` feature enabled (included in standard builds)
+3. Write permissions to the underlying storage (S3, HDFS, etc.)
+
+### Configuration Example
+
+```yaml spicepod.yaml
+version: v1beta1
+kind: Spicepod
+name: iceberg-example
+
+catalogs:
+  - from: iceberg:s3
+    name: lakehouse
+    params:
+      warehouse: s3://my-bucket/warehouse
+      aws_region: us-east-1
+```
+
+### Writing Data
+
+Use standard SQL `INSERT INTO` statements:
+
+```sql
+-- Insert from a federated query
+INSERT INTO lakehouse.analytics.sales
+SELECT * FROM postgres_db.public.orders
+WHERE order_date >= CURRENT_DATE - INTERVAL '1 day';
+
+-- Insert with transformation
+INSERT INTO lakehouse.analytics.customer_summary
+SELECT 
+  customer_id,
+  COUNT(*) as total_orders,
+  SUM(amount) as total_spent
+FROM postgres_db.public.orders
+GROUP BY customer_id;
+```
+
+### Write Modes
+
+Spice supports the following write modes:
+
+- **Append** (default): Add new rows to the table
+- **Overwrite**: Replace all existing data
+- **Error if exists**: Fail if table already contains data
+
+```sql
+-- Overwrite existing data
+INSERT OVERWRITE lakehouse.analytics.daily_stats
+SELECT date, metric, value FROM source_table;
+```
+
+## Authentication
+
+The Iceberg REST Catalog API uses the same authentication as other Spice APIs.
+
+### API Key Authentication
+
+Include your API key in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  http://localhost:8090/v1/iceberg/namespaces
+```
+
+### Configure Authentication
+
+In your `spicepod.yaml`:
+
+```yaml spicepod.yaml
+version: v1beta1
+kind: Spicepod
+name: my-app
+
+runtime:
+  auth:
+    enabled: true
+    keys:
+      - key: ${MY_API_KEY}
+```
+
+## Integration Examples
+
+### Apache Spark
+
+Connect Spark to Spice's Iceberg catalog:
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+    .appName("Spice Iceberg") \
+    .config("spark.sql.catalog.spice", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.spice.type", "rest") \
+    .config("spark.sql.catalog.spice.uri", "http://localhost:8090/v1/iceberg") \
+    .config("spark.sql.catalog.spice.header.Authorization", "Bearer YOUR_API_KEY") \
+    .getOrCreate()
+
+# Query through Spice
+df = spark.sql("SELECT * FROM spice.public.users LIMIT 10")
+df.show()
+```
+
+### PyIceberg
+
+Use PyIceberg to query Spice datasets:
+
+```python
+from pyiceberg.catalog import load_catalog
+
+catalog = load_catalog(
+    "spice",
+    **{
+        "type": "rest",
+        "uri": "http://localhost:8090/v1/iceberg",
+        "header.Authorization": "Bearer YOUR_API_KEY"
+    }
+)
+
+table = catalog.load_table(("spice", "public", "users"))
+print(table.scan().to_arrow())
+```
+
+### Trino/Presto
+
+Configure Trino to use Spice as an Iceberg catalog:
+
+```properties etc/catalog/spice.properties
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest.uri=http://localhost:8090/v1/iceberg
+iceberg.rest.auth.type=bearer
+iceberg.rest.auth.token=YOUR_API_KEY
+```
+
+Query from Trino:
+```sql
+SELECT * FROM spice."spice.public".users;
+```
+
+## Schema Mapping
+
+Spice automatically converts Arrow schemas to Iceberg schemas with field ID assignment:
+
+| Arrow Type | Iceberg Type |
+|------------|-------------|
+| Int32, Int64 | int, long |
+| Float32, Float64 | float, double |
+| Utf8, LargeUtf8 | string |
+| Boolean | boolean |
+| Timestamp | timestamp |
+| Date32, Date64 | date |
+| Binary, LargeBinary | binary |
+| List, LargeList | list |
+| Struct | struct |
+| Map | map |
+
+<Note>
+Spice assigns field IDs recursively for nested types (structs, lists, maps) up to a depth of 10 levels.
+</Note>
+
+## Error Handling
+
+The API returns standard Iceberg error responses:
+
+### 404 Not Found
+```json
+{
+  "error": {
+    "message": "Namespace does not exist",
+    "type": "NoSuchNamespaceException",
+    "code": 404
+  }
+}
+```
+
+### 500 Internal Server Error
+```json
+{
+  "error": {
+    "message": "Internal Server Error: DF_INVALID_SCHEMA",
+    "type": "InternalServerError",
+    "code": 500
+  }
+}
+```
+
+## Performance Optimization
+
+### Data Acceleration
+
+Accelerate Iceberg table queries by configuring acceleration in your dataset:
+
+```yaml spicepod.yaml
+datasets:
+  - from: iceberg:lakehouse.analytics.sales
+    name: sales
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_interval: 10m
+```
+
+### Query Federation
+
+Combine Iceberg tables with other data sources:
+
+```sql
+-- Join Iceberg data with PostgreSQL
+SELECT 
+  s.order_id,
+  s.amount,
+  c.customer_name
+FROM lakehouse.analytics.sales s
+JOIN postgres.public.customers c ON s.customer_id = c.id
+WHERE s.order_date >= CURRENT_DATE - INTERVAL '7 days';
+```
+
+## Limitations
+
+- **Read-only for most operations**: Only `INSERT INTO` writes are currently supported
+- **No schema evolution**: Table schema changes must be made through the underlying Iceberg catalog
+- **No time travel**: Historical snapshot queries are not yet supported through the REST API
+- **Maximum nesting depth**: Schemas deeper than 10 levels return the original schema without field IDs
+
+## Related APIs
+
+- [SQL Query API](/api/http/query) - Query Iceberg tables using SQL
+- [Arrow Flight API](/api/flight) - High-performance data access
+- [Data Connectors](/components/data-connectors) - Connect to Iceberg catalogs
+
+## Learn More
+
+- [Apache Iceberg Documentation](https://iceberg.apache.org/)
+- [Iceberg REST Catalog Spec](https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml)
+- [Spice Iceberg Cookbook](https://github.com/spiceai/cookbook/tree/trunk/catalogs/iceberg)

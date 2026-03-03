@@ -1,0 +1,138 @@
+---
+title: 'Search Overview'
+description: 'Enterprise search capabilities for structured and unstructured data'
+---
+
+Spice provides enterprise-grade search capabilities combining vector similarity, full-text, and keyword search for both structured and unstructured data.
+
+## Search Types
+
+Spice supports three primary search methods:
+
+1. **Vector Similarity Search** - Semantic search using embeddings and distance metrics
+2. **Full-Text Search** - BM25-powered text search with Tantivy
+3. **Keyword Search** - Traditional exact and partial keyword matching
+
+## Hybrid Search
+
+Combine multiple search methods using **Reciprocal Rank Fusion (RRF)** to achieve better relevance than any single method alone. Hybrid search merges results from vector and text search, reranking by relative position rather than raw scores.
+
+## SQL-Native Search
+
+All search capabilities are exposed through SQL using User-Defined Table Functions (UDTFs):
+
+### Vector Search UDTF
+
+```sql
+SELECT * FROM vector_search(
+  table_name,
+  'search query',
+  limit => 10
+);
+```
+
+### Text Search UDTF
+
+```sql
+SELECT * FROM text_search(
+  table_name,
+  'search query',
+  limit => 10
+);
+```
+
+These UDTFs integrate seamlessly with standard SQL operations:
+
+```sql
+SELECT id, title, _score
+FROM vector_search(documents, 'machine learning basics')
+WHERE publish_date > '2024-01-01'
+ORDER BY _score DESC
+LIMIT 5;
+```
+
+## Vector Storage Options
+
+Spice supports multiple vector storage backends:
+
+- **Amazon S3 Vectors** - Petabyte-scale vector storage (recommended for production)
+- **pgvector** - PostgreSQL extension for vector operations
+- **duckdb_vector** - DuckDB with vector extension
+- **sqlite_vec** - SQLite with vector extension
+
+## Embedding Generation
+
+Generate embeddings automatically using:
+
+- **AWS Bedrock** - Amazon Titan, Cohere embeddings
+- **HuggingFace** - Open-source embedding models
+- **Model2Vec** - 500x faster static embeddings
+- **OpenAI** - OpenAI embedding models
+
+## Distance Metrics
+
+Supported vector distance metrics:
+
+- **Cosine Similarity** - Normalized dot product (default)
+- **Euclidean Distance** - L2 distance
+- **Dot Product** - Raw inner product
+
+## Special Columns
+
+Search queries return special columns:
+
+- `_score` - Relevance score (0.0 to 1.0 for vectors, float for text)
+- `_value` - The matched content from the search column
+- `_match` - Specific substring match (for chunked searches)
+
+## Architecture
+
+Spice search is built on:
+
+- **Apache DataFusion** - SQL query engine and execution
+- **Apache Arrow** - Columnar data format for zero-copy operations
+- **Tantivy** - Full-text search library (BM25)
+- **Amazon S3 Vectors** - Distributed vector storage
+
+## Use Cases
+
+### Retrieval-Augmented Generation (RAG)
+
+Search for relevant context to ground LLM responses:
+
+```sql
+SELECT content, _score
+FROM vector_search(knowledge_base, 'explain quantum computing')
+LIMIT 3;
+```
+
+### Semantic Document Search
+
+Find documents by meaning, not just keywords:
+
+```sql
+SELECH title, summary
+FROM vector_search(documents, 'natural language processing applications')
+WHERE category = 'AI'
+ORDER BY _score DESC;
+```
+
+### Multi-Column Search
+
+Search across multiple embedded columns:
+
+```sql
+-- Search both titles and descriptions
+SELECT id, title, description, _score
+FROM vector_search(products, 'wireless headphones', description)
+LIMIT 10;
+```
+
+## Getting Started
+
+1. Configure a dataset with embeddings
+2. Enable search indexing
+3. Query using `vector_search()` or `text_search()` UDTFs
+4. Combine with standard SQL for filtering and sorting
+
+See the individual search method pages for detailed configuration and examples.

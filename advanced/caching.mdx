@@ -1,0 +1,476 @@
+---
+title: 'Results Caching'
+description: 'Configure query result caching and data acceleration caching in Spice.ai'
+---
+
+## Overview
+
+Spice.ai provides two types of caching:
+
+1. **Query Results Caching** - Caches SQL query results
+2. **Data Acceleration Caching** - Caches accelerated dataset contents (new in v1.0+)
+
+Both caching mechanisms reduce latency and load on source systems.
+
+## Query Results Caching
+
+Query results caching stores the output of SQL queries to avoid re-executing expensive queries.
+
+### Basic Configuration
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    max_size: 128MB
+    item_ttl: 1s
+    eviction_policy: lru
+```
+
+### Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable results caching |
+| `max_size` | string | `128MB` | Maximum cache size |
+| `item_ttl` | duration | `1s` | Time-to-live for cached items |
+| `eviction_policy` | string | `lru` | Eviction policy (`lru` or `lfu`) |
+| `engine` | string | `moka` | Cache engine (currently `moka` only) |
+| `hashing_algorithm` | string | `xxh3` | Hash algorithm for cache keys |
+| `encoding` | string | `none` | Compression encoding (`none` or `zstd`) |
+
+### Example: High-Frequency Dashboard
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    max_size: 512MB      # Larger cache for dashboard
+    item_ttl: 5m         # 5-minute cache for near real-time data
+    eviction_policy: lru
+    encoding: zstd       # Compress results to fit more in cache
+```
+
+```sql
+-- Dashboard query benefits from caching
+SELECT 
+  DATE_TRUNC('hour', timestamp) as hour,
+  COUNT(*) as event_count,
+  AVG(duration_ms) as avg_duration
+FROM events
+WHERE timestamp >= NOW() - INTERVAL '24 hours'
+GROUP BY hour
+ORDER BY hour DESC;
+```
+
+### Stale-While-Revalidate (SWR)
+
+Serve stale cached data while refreshing in the background:
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    item_ttl: 1m
+    stale_while_revalidate_ttl: 5m  # Serve stale data for 5 minutes while refreshing
+```
+
+**How SWR Works:**
+
+1. Query executes and result cached with `cached_at` timestamp
+2. Within `item_ttl` (1m): Return cached result (fresh)
+3. After `item_ttl`, within `stale_while_revalidate_ttl` (5m):
+   - Return stale cached result immediately
+   - Trigger background refresh
+   - Next query gets fresh result
+4. After `stale_while_revalidate_ttl` (6m): Cache miss, execute query
+
+### Stale-If-Error
+
+Serve stale data when upstream source fails:
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    item_ttl: 1m
+    stale_if_error: true  # Return stale data on source error
+```
+
+### Cache Keys and Hashing
+
+Cache keys are computed from:
+
+- SQL query text
+- Query parameters
+- Schema/table versions
+
+**Hashing Algorithms:**
+
+| Algorithm | Speed | Collision Resistance | Use Case |
+|-----------|-------|---------------------|----------|
+| `xxh3` | Fastest | Good | Default, best for most cases |
+| `xxh64` | Fast | Good | Stable across platforms |
+| `ahash` | Fast | Good | Good general purpose |
+| `blake3` | Medium | Excellent | High-security environments |
+| `siphash` | Slow | Excellent | DoS attack prevention |
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    hashing_algorithm: xxh3  # Recommended
+```
+
+### Compression Encoding
+
+Compress cached results to store more data:
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    encoding: zstd  # Enable zstd compression
+```
+
+**Encoding Performance:**
+
+- **None** - No compression, fastest access, more memory
+- **Zstd** - 2-10x compression, minimal CPU overhead
+
+### Cache Invalidation
+
+Caches are automatically invalidated when:
+
+1. Item TTL expires
+2. Table is modified (`INSERT`, `UPDATE`, `DELETE`)
+3. Dataset is refreshed
+4. Manual invalidation
+
+**Manual Invalidation:**
+
+```sql
+-- Invalidate cache for specific table
+REFRESH DATASET sales;
+
+-- Or via API
+POST /v1/datasets/sales/acceleration/refresh
+```
+
+### Ignored Schemas
+
+Exclude certain schemas from caching:
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    ignore_schemas:
+      - information_schema
+      - runtime
+      - system
+```
+
+Queries against these schemas bypass the cache.
+
+## Data Acceleration Caching Mode
+
+New in Spice v1.0+, acceleration caching mode caches filtered dataset queries with automatic freshness management.
+
+### When to Use Caching Mode
+
+**Use caching refresh mode when:**
+
+- Queries filter on specific dimensions (e.g., `user_id`, `region`)
+- Source data changes infrequently
+- Query patterns are repetitive
+- Source queries are expensive
+
+**Don't use caching mode when:**
+
+- Need full dataset in accelerator
+- Queries are always unique
+- Source data changes rapidly
+
+### Configuration
+
+```yaml
+datasets:
+  - name: http_logs
+    from: postgres:logs
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_mode: caching  # Enable caching mode
+      cache_ttl: 5m         # Fresh for 5 minutes
+      cache_stale_while_revalidate_ttl: 10m  # Serve stale for 10 minutes while refreshing
+      cache_stale_if_error: true  # Serve stale on source error
+```
+
+### How Acceleration Caching Works
+
+```sql
+-- First query: Cache miss, queries source
+SELECT * FROM http_logs 
+WHERE request_path = '/api/users' 
+  AND request_method = 'GET';
+-- Result cached with filters as key
+
+-- Second query (within 5m): Cache hit, returns cached data
+SELECT * FROM http_logs 
+WHERE request_path = '/api/users' 
+  AND request_method = 'GET';
+-- Instant response from cache
+
+-- Different query: Cache miss, queries source
+SELECT * FROM http_logs 
+WHERE request_path = '/api/orders';
+-- New cache entry created
+```
+
+### Cache Key Computation
+
+Cache keys include:
+
+- Filter expressions (`WHERE` clause)
+- Dataset name
+- Schema version
+
+### Stale-While-Revalidate with Caching Mode
+
+```yaml
+datasets:
+  - name: api_logs
+    from: s3://bucket/logs/
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_mode: caching
+      cache_ttl: 2m
+      cache_stale_while_revalidate_ttl: 10m
+```
+
+**Timeline:**
+
+- **0:00** - Query executes, result cached
+- **0:30** - Query returns cached result (fresh)
+- **2:30** - Query returns stale result, triggers background refresh
+- **2:31** - Background refresh completes, cache updated
+- **2:32** - Query returns fresh result
+- **12:30** - Query executes (past SWR window)
+
+### Batched Cache Writes
+
+Caching mode batches writes to reduce overhead:
+
+```yaml
+# Internal configuration (not user-configurable)
+# - Writes batched every 500ms
+# - Channel capacity: 8,192 requests
+# - Max concurrent refreshes: 10
+```
+
+This avoids O(n²) read-combine-overwrite overhead in DuckDB.
+
+### Localpod Synchronization
+
+Synchronize cache data across pods:
+
+```yaml
+datasets:
+  - name: logs_primary
+    from: postgres:logs
+    acceleration:
+      enabled: true
+      refresh_mode: caching
+      cache_ttl: 5m
+
+  - name: logs_replica
+    from: localpod:logs_primary
+    acceleration:
+      enabled: true
+      refresh_mode: caching
+      cache_ttl: 5m
+```
+
+Parent pod propagates cached data to child pods automatically.
+
+## Performance Tuning
+
+### Cache Size Calculation
+
+**Estimate required cache size:**
+
+```
+Cache Size = (Avg Query Result Size) × (Cache Hit Rate) × (Query Frequency) × (TTL)
+```
+
+**Example:**
+
+- Average result: 1MB
+- Cache hit rate: 80%
+- Query frequency: 100/sec
+- TTL: 60 seconds
+
+```
+Cache Size = 1MB × 0.8 × 100 × 60 = 4,800MB = ~5GB
+```
+
+### Eviction Policies
+
+**LRU (Least Recently Used):**
+
+- Evicts least recently accessed items
+- Good for temporal locality (same queries repeated)
+- Default policy
+
+```yaml
+runtime:
+  results_cache:
+    eviction_policy: lru
+```
+
+**LFU (Least Frequently Used):**
+
+- Evicts least frequently accessed items
+- Good for workloads with hot queries
+- Requires frequency tracking (more memory)
+
+```yaml
+runtime:
+  results_cache:
+    eviction_policy: lfu
+```
+
+### Cache Hit Rate Monitoring
+
+Monitor cache effectiveness:
+
+```sql
+-- View cache metrics (requires observability enabled)
+SELECT 
+  cache_hit_count,
+  cache_miss_count,
+  cache_hit_count::FLOAT / (cache_hit_count + cache_miss_count) AS hit_rate
+FROM runtime.metrics
+WHERE metric_name = 'results_cache';
+```
+
+### TTL Tuning
+
+**Short TTL (1s - 1m):**
+
+- Near real-time data
+- High query frequency
+- Small result sets
+
+**Medium TTL (1m - 10m):**
+
+- Dashboard queries
+- Periodic reports
+- Moderate data freshness requirements
+
+**Long TTL (10m+):**
+
+- Historical data
+- Slow-changing dimensions
+- Large result sets
+
+## Best Practices
+
+### 1. Match TTL to Data Freshness Requirements
+
+```yaml
+# Real-time metrics
+datasets:
+  - name: live_metrics
+    acceleration:
+      refresh_mode: caching
+      cache_ttl: 30s  # Short TTL for fresh data
+
+# Daily reports
+datasets:
+  - name: daily_reports
+    acceleration:
+      refresh_mode: caching
+      cache_ttl: 1h  # Longer TTL acceptable
+```
+
+### 2. Use Compression for Large Results
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    encoding: zstd  # Compress large results
+```
+
+### 3. Enable SWR for High-Traffic Endpoints
+
+```yaml
+runtime:
+  results_cache:
+    enabled: true
+    item_ttl: 1m
+    stale_while_revalidate_ttl: 5m  # Reduce source load
+```
+
+### 4. Monitor Cache Memory Usage
+
+```sql
+SELECT 
+  cache_size_bytes,
+  cache_max_size_bytes,
+  cache_size_bytes::FLOAT / cache_max_size_bytes AS usage_pct
+FROM runtime.metrics
+WHERE metric_name = 'results_cache';
+```
+
+### 5. Use Caching Mode for Filtered Queries
+
+```yaml
+# Good fit: Filtered API logs
+datasets:
+  - name: api_logs
+    from: s3://logs/
+    acceleration:
+      refresh_mode: caching  # Queries filter by endpoint, method, etc.
+```
+
+## Troubleshooting
+
+### Cache Not Working
+
+**Check configuration:**
+
+```sql
+SELECT * FROM runtime.metrics WHERE metric_name LIKE '%cache%';
+```
+
+**Common issues:**
+
+1. Cache disabled in configuration
+2. Queries against ignored schemas
+3. Non-deterministic queries (e.g., `NOW()`, `RANDOM()`)
+4. TTL too short
+
+### High Cache Miss Rate
+
+**Causes:**
+
+1. TTL too short for query pattern
+2. Queries too diverse (low repetition)
+3. Cache size too small (evicting frequently)
+4. Frequent data modifications invalidating cache
+
+**Solutions:**
+
+1. Increase `item_ttl`
+2. Increase `max_size`
+3. Use SWR to serve stale data
+4. Adjust `eviction_policy`
+
+## Related Topics
+
+- [Query Optimization](/advanced/query-optimization) - Query performance tuning
+- [Snapshots](/advanced/snapshots) - Fast cold starts with snapshots

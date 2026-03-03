@@ -1,0 +1,244 @@
+---
+title: 'Models API'
+description: 'List and monitor AI models in the Spice runtime'
+---
+
+## Overview
+
+The Models API provides an endpoint to list all machine learning and language models available in the runtime, compatible with the OpenAI models API format.
+
+## List Models
+
+```
+GET /v1/models
+```
+
+Returns a list of all models (both ML and LLM) available in the runtime.
+
+### Query Parameters
+
+<ParamField query="status" type="boolean" default={false}>
+  Include the current status of each model. Possible values:
+  - `ready` - Model is ready for inference
+  - `loading` - Model is being loaded
+  - `error` - Model encountered an error
+</ParamField>
+
+<ParamField query="format" type="string" default="json">
+  Response format: `json` or `csv`
+</ParamField>
+
+<ParamField query="metadata_fields" type="string">
+  Comma-separated list of metadata fields to include. Available fields:
+  - `supports_responses_api` - Whether the model supports the responses API
+</ParamField>
+
+### Response
+
+<ResponseField name="object" type="string">
+  Always `"list"`
+</ResponseField>
+
+<ResponseField name="data" type="array<object>">
+  Array of model information objects.
+
+  <ResponseField name="id" type="string">
+    The model identifier (e.g., `gpt-4`, `text-embedding-ada-002`)
+  </ResponseField>
+
+  <ResponseField name="object" type="string">
+    Always `"model"`
+  </ResponseField>
+
+  <ResponseField name="owned_by" type="string">
+    The provider or owner of the model (e.g., `openai`, `openai-internal`, `spiceai`)
+  </ResponseField>
+
+  <ResponseField name="datasets" type="array<string>">
+    List of datasets associated with this model (for embedding models). `null` if no datasets.
+  </ResponseField>
+
+  <ResponseField name="status" type="string">
+    Current status of the model (only when `status=true` query parameter is set)
+  </ResponseField>
+
+  <ResponseField name="error" type="object">
+    Error information when status is `error` (only when `status=true`)
+
+    <ResponseField name="category" type="string">
+      Error category (e.g., `model`, `worker`)
+    </ResponseField>
+
+    <ResponseField name="type" type="string">
+      Error type (e.g., `auth`, `connection`, `loading`)
+    </ResponseField>
+
+    <ResponseField name="code" type="string">
+      Stable error code (e.g., `model.auth`, `model.loading`)
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="error_message" type="string">
+    Human-readable error message (only when `status=true` and status is `error`)
+  </ResponseField>
+
+  <ResponseField name="metadata" type="object">
+    Additional model metadata (only when `metadata_fields` query parameter is set)
+
+    <ResponseField name="supports_responses_api" type="boolean">
+      Whether the model supports the responses API
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+### Response Example (JSON)
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "owned_by": "openai",
+      "datasets": null,
+      "status": "ready",
+      "error": null,
+      "error_message": null
+    },
+    {
+      "id": "text-embedding-ada-002",
+      "object": "model",
+      "owned_by": "openai-internal",
+      "datasets": ["text-dataset-1", "text-dataset-2"],
+      "status": "error",
+      "error": {
+        "category": "model",
+        "type": "auth",
+        "code": "model.auth"
+      },
+      "error_message": "Invalid API key"
+    }
+  ]
+}
+```
+
+### Response Example (CSV)
+
+```csv
+id,object,owned_by,datasets,status,error,error_message
+gpt-4,model,openai,,ready,,
+text-embedding-ada-002,model,openai-internal,"text-dataset-1,text-dataset-2",error,model.auth,Invalid API key
+```
+
+### Response with Metadata
+
+When requesting `metadata_fields=supports_responses_api`:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "owned_by": "openai",
+      "datasets": null,
+      "status": "ready",
+      "error": null,
+      "error_message": null,
+      "metadata": {
+        "supports_responses_api": true
+      }
+    },
+    {
+      "id": "text-embedding-ada-002",
+      "object": "model",
+      "owned_by": "openai-internal",
+      "datasets": ["text-dataset-1", "text-dataset-2"],
+      "status": "ready",
+      "error": null,
+      "error_message": null,
+      "metadata": {
+        "supports_responses_api": false
+      }
+    }
+  ]
+}
+```
+
+### Status Codes
+
+- **200 OK** - Models retrieved successfully
+- **500 Internal Server Error** - App not initialized or unexpected error
+
+### Error Response (500)
+
+```
+App not initialized
+```
+
+## Examples
+
+### List All Models
+
+```bash
+curl http://localhost:8090/v1/models
+```
+
+### List Models with Status
+
+```bash
+curl http://localhost:8090/v1/models?status=true
+```
+
+### List Models with Metadata
+
+```bash
+curl http://localhost:8090/v1/models?metadata_fields=supports_responses_api
+```
+
+### Get CSV Format
+
+```bash
+curl http://localhost:8090/v1/models?format=csv
+```
+
+### Combined Parameters
+
+```bash
+curl http://localhost:8090/v1/models?status=true&format=json&metadata_fields=supports_responses_api
+```
+
+## OpenAI Compatibility
+
+This endpoint follows the OpenAI models API format, making it compatible with OpenAI client libraries:
+
+```python
+import openai
+
+client = openai.OpenAI(
+    api_key="your-key",
+    base_url="http://localhost:8090/v1"
+)
+
+# List all models
+models = client.models.list()
+for model in models.data:
+    print(f"{model.id} - {model.owned_by}")
+```
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  apiKey: 'your-key',
+  baseURL: 'http://localhost:8090/v1',
+});
+
+// List all models
+const models = await client.models.list();
+models.data.forEach(model => {
+  console.log(`${model.id} - ${model.owned_by}`);
+});
+```

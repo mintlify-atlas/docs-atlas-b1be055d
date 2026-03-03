@@ -1,0 +1,411 @@
+---
+title: 'PostgreSQL Accelerator'
+description: 'Full-featured PostgreSQL database acceleration'
+---
+
+The PostgreSQL accelerator provides full-featured relational database acceleration by connecting to an external PostgreSQL instance. It's optimized for OLTP workloads requiring advanced database features, multi-dataset federation, and high concurrency.
+
+## When to Use PostgreSQL
+
+- **Advanced features**: Need triggers, stored procedures, extensions
+- **Multi-dataset federation**: Query across multiple accelerated tables
+- **High concurrency**: Multiple concurrent writers
+- **Existing infrastructure**: Already running PostgreSQL
+- **Large datasets**: Datasets > 100GB with proper indexing
+
+## Configuration
+
+### Basic Setup
+
+```yaml
+datasets:
+  - name: orders
+    from: s3://data-lake/orders/
+    acceleration:
+      enabled: true
+      engine: postgres
+      params:
+        pg_host: localhost
+        pg_port: 5432
+        pg_db: spice_acceleration
+        pg_user: spice
+        pg_pass: ${secrets:pg_password}
+```
+
+### With SSL/TLS
+
+```yaml
+params:
+  pg_host: db.example.com
+  pg_port: 5432
+  pg_db: spice
+  pg_user: spice
+  pg_pass: ${secrets:pg_password}
+  pg_sslmode: require
+  pg_sslrootcert: /path/to/ca-cert.pem
+```
+
+## SSL Modes
+
+Configure SSL connection security:
+
+| Mode        | Description                                      |
+|-------------|--------------------------------------------------|
+| disable     | No SSL (not recommended for production)          |
+| prefer      | Use SSL if available, fallback to non-SSL        |
+| require     | Require SSL, but don't verify CA certificate     |
+| verify-ca   | Require SSL and verify CA certificate            |
+| verify-full | Require SSL and verify hostname matches cert     |
+
+```yaml
+params:
+  pg_sslmode: verify-full
+  pg_sslrootcert: /etc/ssl/certs/ca-cert.pem
+```
+
+## Connection Pooling
+
+### Pool Configuration
+
+```yaml
+params:
+  pg_connection_pool_size: 20      # Max connections (default: 10)
+  pg_connection_pool_min: 5        # Min idle connections (default: 5)
+```
+
+The connection pool:
+- Reuses connections for better performance
+- Limits concurrent connections to PostgreSQL
+- Lazily creates connections up to min idle
+
+### Pool Size Guidelines
+
+- Small deployments: 10-20 connections
+- Medium deployments: 20-50 connections
+- Large deployments: 50-100 connections
+- Ensure PostgreSQL `max_connections` > pool size
+
+## Refresh Modes
+
+### Full Refresh
+
+Replaces all data:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: postgres
+  refresh_mode: full
+  refresh_interval: 1h
+```
+
+### Append Mode
+
+Appends only new data:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: postgres
+  refresh_mode: append
+  refresh_interval: 5m
+  time_column: created_at
+```
+
+## Primary Keys and Constraints
+
+### Primary Key
+
+```yaml
+acceleration:
+  enabled: true
+  engine: postgres
+  primary_key: id
+```
+
+### Composite Primary Key
+
+```yaml
+primary_key:
+  - customer_id
+  - order_id
+```
+
+### On Conflict Behavior
+
+```yaml
+acceleration:
+  enabled: true
+  engine: postgres
+  primary_key: id
+  on_conflict: upsert
+```
+
+Uses PostgreSQL's `ON CONFLICT DO UPDATE` for upserts.
+
+## Indexing
+
+Create indexes in PostgreSQL for better query performance:
+
+```sql
+CREATE INDEX idx_orders_customer_id ON orders(customer_id);
+CREATE INDEX idx_orders_created_at ON orders(created_at);
+```
+
+Spice respects existing PostgreSQL indexes.
+
+## Federation
+
+Query across multiple PostgreSQL-accelerated datasets:
+
+```yaml
+datasets:
+  - name: orders
+    acceleration:
+      engine: postgres
+      params:
+        pg_host: localhost
+        pg_db: spice
+  
+  - name: customers
+    acceleration:
+      engine: postgres
+      params:
+        pg_host: localhost
+        pg_db: spice
+```
+
+Federated query:
+
+```sql
+SELECT 
+  o.order_id,
+  c.customer_name,
+  o.total_amount
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE o.created_at > NOW() - INTERVAL '1 day';
+```
+
+## Performance Characteristics
+
+### Query Performance
+
+| Operation        | Performance | Notes                             |
+|------------------|-------------|-----------------------------------|
+| Point queries    | Excellent   | With proper indexes               |
+| Inserts          | Excellent   | Batch inserts recommended         |
+| Updates          | Excellent   | In-place updates                  |
+| Deletes          | Excellent   | Fast with indexes                 |
+| Full table scan  | Good        | Better with parallel query        |
+| Aggregations     | Good        | Optimized for OLTP                |
+| Complex joins    | Excellent   | Advanced query planner            |
+
+### Network Latency
+
+PostgreSQL is an external service. Minimize latency:
+
+- Co-locate Spice and PostgreSQL in same datacenter
+- Use connection pooling to reduce connection overhead
+- Consider local accelerators (DuckDB, SQLite) if network is slow
+
+## ACID Transactions
+
+PostgreSQL provides full ACID guarantees:
+
+```sql
+BEGIN;
+  INSERT INTO orders (id, customer_id, amount) VALUES (1, 100, 50.00);
+  UPDATE customers SET total_spent = total_spent + 50.00 WHERE id = 100;
+COMMIT;
+```
+
+## Advanced Features
+
+### Triggers
+
+Create PostgreSQL triggers for automation:
+
+```sql
+CREATE TRIGGER update_modified_timestamp
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
+```
+
+### Extensions
+
+Use PostgreSQL extensions:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- Trigram matching
+CREATE INDEX idx_name_trgm ON customers USING gin(name gin_trgm_ops);
+```
+
+### Partitioning
+
+Leverage PostgreSQL native partitioning:
+
+```sql
+CREATE TABLE orders (
+    order_id SERIAL,
+    customer_id INTEGER,
+    order_date DATE,
+    amount NUMERIC
+) PARTITION BY RANGE (order_date);
+
+CREATE TABLE orders_2024_q1 PARTITION OF orders
+    FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+```
+
+## Example Configurations
+
+### High-Concurrency Transactional
+
+```yaml
+datasets:
+  - name: orders
+    from: kafka://localhost:9092/orders
+    acceleration:
+      enabled: true
+      engine: postgres
+      params:
+        pg_host: localhost
+        pg_port: 5432
+        pg_db: spice
+        pg_user: spice
+        pg_pass: ${secrets:pg_password}
+        pg_connection_pool_size: 50
+        pg_connection_pool_min: 10
+      primary_key: order_id
+      on_conflict: upsert
+      refresh_interval: 30s
+```
+
+### Secure Remote Connection
+
+```yaml
+datasets:
+  - name: customers
+    from: s3://data-lake/customers/
+    acceleration:
+      enabled: true
+      engine: postgres
+      params:
+        pg_host: db.production.example.com
+        pg_port: 5432
+        pg_db: spice_prod
+        pg_user: spice_app
+        pg_pass: ${secrets:prod_pg_password}
+        pg_sslmode: verify-full
+        pg_sslrootcert: /etc/ssl/certs/production-ca.pem
+      refresh_interval: 5m
+```
+
+### Multi-Dataset Federation
+
+```yaml
+datasets:
+  - name: orders
+    acceleration:
+      engine: postgres
+      params:
+        pg_host: postgres-1.internal
+        pg_db: spice
+  
+  - name: customers
+    acceleration:
+      engine: postgres
+      params:
+        pg_host: postgres-1.internal
+        pg_db: spice
+  
+  - name: products
+    acceleration:
+      engine: postgres
+      params:
+        pg_host: postgres-1.internal
+        pg_db: spice
+```
+
+## Monitoring
+
+### Connection Pool Metrics
+
+```sql
+SELECT * FROM runtime.metrics 
+WHERE name LIKE 'postgres_pool_%';
+```
+
+### Dataset Metrics
+
+```sql
+SELECT 
+  dataset_name,
+  value as row_count
+FROM runtime.metrics
+WHERE name = 'acceleration_rows';
+```
+
+## Parameters
+
+| Parameter                | Type    | Description                          | Default |
+|--------------------------|---------|--------------------------------------|---------|
+| pg_host                  | string  | PostgreSQL server hostname           | -       |
+| pg_port                  | integer | PostgreSQL server port               | 5432    |
+| pg_db                    | string  | Database name                        | -       |
+| pg_user                  | string  | Username (use secrets)               | -       |
+| pg_pass                  | string  | Password (use secrets)               | -       |
+| pg_sslmode               | string  | SSL mode (disable, require, etc.)    | prefer  |
+| pg_sslrootcert           | string  | Path to CA certificate               | -       |
+| pg_connection_pool_size  | integer | Maximum pool connections             | 10      |
+| pg_connection_pool_min   | integer | Minimum idle connections             | 5       |
+
+## Secrets Management
+
+Always use secrets for credentials:
+
+```yaml
+params:
+  pg_user: spice_app
+  pg_pass: ${secrets:postgres_password}
+```
+
+Configure secrets in `spicepod.yml`:
+
+```yaml
+secrets:
+  - from: env
+    name: postgres_password
+```
+
+## Limitations
+
+- Requires external PostgreSQL instance
+- Network latency affects performance
+- Connection pool size limited by PostgreSQL `max_connections`
+- Not ideal for pure analytical workloads (consider DuckDB)
+
+## When to Use DuckDB Instead
+
+Consider DuckDB if:
+
+- Analytical queries with heavy aggregations
+- No need for external database
+- Want embedded solution
+- Don't need multi-user concurrent writes
+
+## When to Use SQLite Instead
+
+Consider SQLite if:
+
+- Lightweight embedded database sufficient
+- Single-file storage preferred
+- Dataset < 10GB
+- No need for advanced PostgreSQL features
+
+## Next Steps
+
+- [SQLite Accelerator](/accelerators/sqlite) - For lightweight transactional workloads
+- [DuckDB Accelerator](/accelerators/duckdb) - For analytical workloads
+- [Acceleration Overview](/accelerators/overview) - Compare all accelerators

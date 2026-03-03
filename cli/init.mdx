@@ -1,0 +1,172 @@
+---
+title: 'spice init'
+description: 'Initialize a new Spice app'
+---
+
+The `spice init` command creates a new Spice app by generating a `spicepod.yaml` configuration file.
+
+## Usage
+
+```bash
+spice init [NAME]
+```
+
+## Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `NAME` | `.` (current directory) | Name of the Spice app or directory to create |
+
+## Behavior
+
+### Interactive Mode (Default)
+
+When run without arguments or with `.`:
+
+```bash
+spice init
+# or
+spice init .
+```
+
+The command prompts for the app name, defaulting to the current directory name:
+
+```
+name: (current_directory)?
+```
+
+Press Enter to accept the default or type a custom name.
+
+### Named Mode
+
+When run with a name argument:
+
+```bash
+spice init my_app
+```
+
+The command:
+1. Creates a directory named `my_app`
+2. Generates `my_app/spicepod.yaml` with the specified name
+
+## Generated File
+
+The command creates a minimal `spicepod.yaml` file:
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+```
+
+## Examples
+
+### Initialize in Current Directory
+
+```bash
+mkdir my_project
+cd my_project
+spice init
+```
+
+**Output:**
+```
+name: (my_project)? 
+Initialized spicepod.yaml
+```
+
+### Initialize with Custom Name
+
+```bash
+spice init analytics_app
+cd analytics_app
+ls
+```
+
+**Output:**
+```
+Initialized analytics_app/spicepod.yaml
+```
+
+**File contents:**
+```yaml
+version: v2
+kind: Spicepod
+name: analytics_app
+```
+
+### Override Existing File
+
+If `spicepod.yaml` already exists:
+
+```bash
+spice init
+```
+
+**Output:**
+```
+spicepod.yaml already exists. Replace (y/n)? y
+Initialized spicepod.yaml
+```
+
+Entering `n` cancels the operation without changes.
+
+## Next Steps
+
+After initialization:
+
+1. **Configure datasets** - Add data sources to your Spicepod:
+   ```bash
+   spice dataset configure
+   ```
+
+2. **Add dependencies** - Include community Spicepods:
+   ```bash
+   spice add spiceai/quickstart
+   ```
+
+3. **Start the runtime** - Launch Spice with your configuration:
+   ```bash
+   spice run
+   ```
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success - `spicepod.yaml` created or user cancelled |
+| `1` | Error - Failed to create directory or write file |
+
+## Related Commands
+
+- [`spice run`](/cli/run) - Start the Spice runtime
+- [`spice dataset configure`](/cli/dataset) - Configure a dataset interactively
+- [`spice add`](/cli/add) - Add Spicepod dependencies
+
+## Configuration File Format
+
+The generated `spicepod.yaml` uses the Spicepod v2 format. You can manually add:
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+# Add data sources
+datasets:
+  - from: postgres:my_table
+    name: my_table
+    acceleration:
+      enabled: true
+
+# Add ML models
+models:
+  - from: huggingface:huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+
+# Add dependencies
+dependencies:
+  - spiceai/quickstart
+```
+
+See [Spicepod Reference](https://spiceai.org/docs/reference/spicepod) for full configuration options.

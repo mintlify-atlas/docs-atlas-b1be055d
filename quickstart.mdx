@@ -1,80 +1,214 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart'
+description: 'Get up and running with Spice in minutes using the taxi_trips example dataset'
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+This quickstart guide will walk you through installing Spice, initializing a new app, starting the runtime, and querying your first dataset.
 
-### Step 1: Set up your local environment
+<iframe width="100%" height="400" src="https://github.com/spiceai/spiceai/assets/88671039/85cf9a69-46e7-412e-8b68-22617dcbd4e0" frameborder="0" allowfullscreen></iframe>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Prerequisites
 
-### Step 2: Deploy your changes
+- **macOS, Linux, or Windows** operating system
+- **Terminal** or command-line interface
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Note>
+For detailed installation instructions for your platform, see the [Installation](/installation) guide.
+</Note>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Quick Install
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
+```bash macOS/Linux
+curl https://install.spiceai.org | /bin/bash
+```
 
-### Step 3: Go live
+```bash Homebrew
+brew install spiceai/spiceai/spice
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```powershell Windows
+iex ((New-Object System.Net.WebClient).DownloadString("https://install.spiceai.org/Install.ps1"))
+```
+</CodeGroup>
 
-## Next steps
+## Getting Started
 
-Now that you have your docs running, explore these key features:
+<Steps>
+  <Step title="Initialize a new Spice app">
+    Create a new Spice app using the `spice init` command:
+
+    ```bash
+    spice init spice_qs
+    ```
+
+    This creates a `spicepod.yaml` file in the `spice_qs` directory. Navigate to that directory:
+
+    ```bash
+    cd spice_qs
+    ```
+  </Step>
+
+  <Step title="Start the Spice runtime">
+    Start the Spice runtime using the `spice run` command:
+
+    ```bash
+    spice run
+    ```
+
+    You should see output similar to:
+
+    ```bash
+    2025/01/20 11:26:10 INFO Spice.ai runtime starting...
+    2025-01-20T19:26:10.679068Z  INFO runtime::init::dataset: No datasets were configured. If this is unexpected, check the Spicepod configuration.
+    2025-01-20T19:26:10.679716Z  INFO runtime::flight: Spice Runtime Flight listening on 127.0.0.1:50051
+    2025-01-20T19:26:10.679786Z  INFO runtime::metrics_server: Spice Runtime Metrics listening on 127.0.0.1:9090
+    2025-01-20T19:26:10.680140Z  INFO runtime::http: Spice Runtime HTTP listening on 127.0.0.1:8090
+    2025-01-20T19:26:10.879126Z  INFO runtime::init::results_cache: Initialized sql results cache; max size: 128.00 MiB, item ttl: 1s
+    ```
+
+    <Info>
+    The runtime is now started and ready for queries on:
+    - **HTTP**: `127.0.0.1:8090`
+    - **Arrow Flight**: `127.0.0.1:50051`
+    - **Metrics**: `127.0.0.1:9090`
+    </Info>
+  </Step>
+
+  <Step title="Add a dataset">
+    In a new terminal window, add the `spiceai/quickstart` Spicepod. A Spicepod is a package of configuration defining datasets and ML models.
+
+    ```bash
+    spice add spiceai/quickstart
+    ```
+
+    The `spicepod.yaml` file will be updated with the `spiceai/quickstart` dependency:
+
+    ```yaml
+    version: v1
+    kind: Spicepod
+    name: spice_qs
+    dependencies:
+      - spiceai/quickstart
+    ```
+
+    The `spiceai/quickstart` Spicepod adds a `taxi_trips` data table to the runtime. In your runtime terminal, you'll see:
+
+    ```bash
+    2025-01-20T19:26:30.011633Z  INFO runtime::init::dataset: Dataset taxi_trips registered (s3://spiceai-demo-datasets/taxi_trips/2024/), acceleration (arrow), results cache enabled.
+    2025-01-20T19:26:30.013002Z  INFO runtime::accelerated_table::refresh_task: Loading data for dataset taxi_trips
+    2025-01-20T19:26:40.312839Z  INFO runtime::accelerated_table::refresh_task: Loaded 2,964,624 rows (399.41 MiB) for dataset taxi_trips in 10s 299ms
+    ```
+  </Step>
+
+  <Step title="Query the dataset">
+    Start the Spice SQL REPL:
+
+    ```bash
+    spice sql
+    ```
+
+    You'll see the SQL REPL interface:
+
+    ```bash
+    Welcome to the Spice.ai SQL REPL! Type 'help' for help.
+
+    show tables; -- list available tables
+    sql>
+    ```
+
+    List the available tables:
+
+    ```sql
+    show tables;
+    ```
+
+    Output:
+
+    ```bash
+    +---------------+--------------+---------------+------------+
+    | table_catalog | table_schema | table_name    | table_type |
+    +---------------+--------------+---------------+------------+
+    | spice         | public       | taxi_trips    | BASE TABLE |
+    | spice         | runtime      | query_history | BASE TABLE |
+    | spice         | runtime      | metrics       | BASE TABLE |
+    +---------------+--------------+---------------+------------+
+
+    Time: 0.022671708 seconds. 3 rows.
+    ```
+
+    Query the longest taxi trips:
+
+    ```sql
+    SELECT trip_distance, total_amount FROM taxi_trips ORDER BY trip_distance DESC LIMIT 10;
+    ```
+
+    Output:
+
+    ```bash
+    +---------------+--------------+
+    | trip_distance | total_amount |
+    +---------------+--------------+
+    | 312722.3      | 22.15        |
+    | 97793.92      | 36.31        |
+    | 82015.45      | 21.56        |
+    | 72975.97      | 20.04        |
+    | 71752.26      | 49.57        |
+    | 59282.45      | 33.52        |
+    | 59076.43      | 23.17        |
+    | 58298.51      | 18.63        |
+    | 51619.36      | 24.2         |
+    | 44018.64      | 52.43        |
+    +---------------+--------------+
+
+    Time: 0.045150667 seconds. 10 rows.
+    ```
+  </Step>
+</Steps>
+
+## Runtime Container Deployment
+
+Spice can also be deployed as a container for production use.
+
+<CodeGroup>
+```bash Docker Pull
+docker pull spiceai/spiceai
+```
+
+```dockerfile Dockerfile
+from spiceai/spiceai:latest
+```
+
+```bash Helm
+helm repo add spiceai https://helm.spiceai.org
+helm install spiceai spiceai/spiceai
+```
+</CodeGroup>
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Explore the Cookbook" icon="book" href="https://github.com/spiceai/cookbook">
+    Over 45 quickstarts and samples showing how to use Spice with various data sources and AI models.
+  </Card>
+  
+  <Card title="Documentation" icon="file-text" href="https://spiceai.org/docs">
+    Comprehensive documentation covering all features, connectors, and APIs.
+  </Card>
+  
+  <Card title="Data Connectors" icon="plug" href="https://spiceai.org/docs/components/data-connectors">
+    Learn about the 30+ supported data connectors including PostgreSQL, MySQL, S3, Databricks, and more.
+  </Card>
+  
+  <Card title="Data Accelerators" icon="rocket" href="https://spiceai.org/docs/components/data-accelerators">
+    Understand how to accelerate your queries with Arrow, DuckDB, SQLite, PostgreSQL, or Cayenne.
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+**Using Spice.ai Cloud Platform**
+
+Spice also integrates with the Spice.ai Cloud Platform for hosted datasets and models. Create a free account at [spice.ai](https://spice.ai/) and use the `spice login` command to authenticate.
 </Note>

@@ -1,0 +1,522 @@
+---
+title: 'TLS Configuration'
+description: 'Configure TLS/SSL encryption for secure communication with Spice.ai'
+---
+
+# TLS/SSL Configuration
+
+Spice.ai supports TLS (Transport Layer Security) encryption to secure communication between clients and the runtime. When enabled, TLS protects all endpoint traffic including HTTP, Flight SQL, and gRPC APIs.
+
+## Overview
+
+TLS configuration in Spice provides:
+
+- **Encrypted communication**: All data in transit is encrypted
+- **Certificate-based security**: Standard X.509 certificate validation
+- **Multi-protocol support**: Protects HTTP, Flight SQL, and gRPC endpoints
+- **Flexible configuration**: Support for file-based and inline certificates
+
+## Configuration Methods
+
+### Method 1: Certificate Files
+
+Reference certificate and key files on the filesystem:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my-app
+
+runtime:
+  tls:
+    enabled: true
+    certificate_file: /path/to/certificate.pem
+    key_file: /path/to/private-key.pem
+```
+
+### Method 2: Inline Certificates
+
+Provide PEM-encoded certificates directly in the configuration:
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate: |
+      -----BEGIN CERTIFICATE-----
+      MIIDXTCCAkWgAwIBAgIJAKJ...
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvQIBADANBgkqhki...
+      -----END PRIVATE KEY-----
+```
+
+### Method 3: Certificates from Secrets
+
+Reference certificates stored in secret stores:
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate_file: ${secrets:TLS_CERT_PATH}
+    key_file: ${secrets:TLS_KEY_PATH}
+```
+
+Or with inline content from secrets:
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate: ${secrets:TLS_CERTIFICATE}
+    key: ${secrets:TLS_PRIVATE_KEY}
+```
+
+### Method 4: Command-Line Arguments
+
+Enable TLS with command-line flags:
+
+```bash
+spiced --tls-enabled \
+  --tls-certificate-file /path/to/cert.pem \
+  --tls-key-file /path/to/key.pem
+```
+
+Or with inline certificates:
+
+```bash
+spiced --tls-enabled \
+  --tls-certificate "$(cat certificate.pem)" \
+  --tls-key "$(cat private-key.pem)"
+```
+
+## Configuration Priority
+
+When multiple TLS configuration sources are provided, Spice uses this priority:
+
+1. Command-line arguments (`--tls-certificate-file`, `--tls-certificate`)
+2. Spicepod configuration with secrets injection
+3. Direct spicepod configuration
+
+## Certificate Requirements
+
+### Supported Formats
+
+- **Certificate**: PEM-encoded X.509 certificate
+- **Private Key**: PEM-encoded private key (RSA, ECDSA, or Ed25519)
+
+### Certificate Types
+
+Spice supports:
+- **Self-signed certificates**: For development and testing
+- **CA-signed certificates**: For production environments
+- **Certificate chains**: Including intermediate certificates
+
+### Generating Self-Signed Certificates
+
+For development and testing:
+
+```bash
+# Generate private key
+openssl genrsa -out key.pem 2048
+
+# Generate self-signed certificate (valid for 365 days)
+openssl req -new -x509 -key key.pem -out cert.pem -days 365 \
+  -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+```
+
+### Using Let's Encrypt Certificates
+
+For production with automatic certificate management:
+
+```bash
+# Install certbot
+sudo apt-get install certbot
+
+# Obtain certificate
+sudo certbot certonly --standalone -d your-domain.com
+
+# Certificates will be in:
+# /etc/letsencrypt/live/your-domain.com/fullchain.pem
+# /etc/letsencrypt/live/your-domain.com/privkey.pem
+```
+
+Then reference in your spicepod:
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate_file: /etc/letsencrypt/live/your-domain.com/fullchain.pem
+    key_file: /etc/letsencrypt/live/your-domain.com/privkey.pem
+```
+
+## TLS with Different Endpoints
+
+When TLS is enabled, all Spice endpoints use encrypted communication:
+
+### HTTP/REST API
+
+```bash
+# Without TLS (default)
+curl http://localhost:3000/v1/sql -d "SELECT 1"
+
+# With TLS
+curl https://localhost:3000/v1/sql -d "SELECT 1"
+
+# With self-signed certificate (development)
+curl -k https://localhost:3000/v1/sql -d "SELECT 1"
+```
+
+### Flight SQL
+
+```python
+import pyarrow.flight as flight
+
+# Without TLS
+client = flight.FlightClient("grpc://localhost:50051")
+
+# With TLS
+client = flight.FlightClient("grpc+tls://localhost:50051")
+
+# With self-signed certificate (development)
+import grpc
+options = [
+    ('grpc.ssl_target_name_override', 'localhost'),
+]
+generic_options = []
+for key, val in options:
+    generic_options.append(flight.FlightClientMiddlewareFactory.create_option(key, val))
+
+client = flight.FlightClient(
+    "grpc+tls://localhost:50051",
+    generic_options=generic_options
+)
+```
+
+### gRPC
+
+```go
+import (
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials"
+)
+
+// With TLS
+creds, err := credentials.NewClientTLSFromFile("cert.pem", "")
+if err != nil {
+    log.Fatal(err)
+}
+
+conn, err := grpc.Dial(
+    "localhost:50052",
+    grpc.WithTransportCredentials(creds),
+)
+```
+
+## TLS with Secrets Management
+
+### Kubernetes Secrets
+
+Store TLS certificates in Kubernetes secrets:
+
+```bash
+# Create secret from certificate files
+kubectl create secret tls spice-tls-cert \
+  --cert=certificate.pem \
+  --key=private-key.pem
+```
+
+Mount the secret and reference in spicepod:
+
+```yaml
+# Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spice
+spec:
+  template:
+    spec:
+      containers:
+      - name: spice
+        image: spiceai/spiceai:latest
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/spice/tls
+          readOnly: true
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: spice-tls-cert
+---
+# Spicepod configuration
+runtime:
+  tls:
+    enabled: true
+    certificate_file: /etc/spice/tls/tls.crt
+    key_file: /etc/spice/tls/tls.key
+```
+
+### Environment Variables
+
+Store certificates in environment variables (for development):
+
+```bash
+export SPICE_TLS_CERT=$(cat certificate.pem)
+export SPICE_TLS_KEY=$(cat private-key.pem)
+```
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate: ${env:SPICE_TLS_CERT}
+    key: ${env:SPICE_TLS_KEY}
+```
+
+### AWS Secrets Manager
+
+Store certificates in AWS Secrets Manager:
+
+```bash
+# Store certificate
+aws secretsmanager create-secret \
+  --name spice/tls/certificate \
+  --secret-string file://certificate.pem
+
+# Store private key
+aws secretsmanager create-secret \
+  --name spice/tls/private-key \
+  --secret-string file://private-key.pem
+```
+
+Configure secret store and reference:
+
+```yaml
+secrets:
+  - name: aws
+    from: aws_secrets_manager:spice-secrets
+
+runtime:
+  tls:
+    enabled: true
+    certificate: ${aws:tls-certificate}
+    key: ${aws:tls-private-key}
+```
+
+## Complete Configuration Example
+
+Production-ready configuration with TLS and authentication:
+
+```yaml
+version: v1
+kind: Spicepod
+name: secure-app
+
+secrets:
+  - name: env
+    from: env
+
+runtime:
+  # TLS Configuration
+  tls:
+    enabled: true
+    certificate_file: /etc/spice/tls/cert.pem
+    key_file: /etc/spice/tls/key.pem
+  
+  # API Key Authentication
+  auth:
+    api_key:
+      enabled: true
+      keys:
+        - ${env:SPICE_API_KEY_READONLY}:ro
+        - ${env:SPICE_API_KEY_READWRITE}:rw
+
+datasets:
+  - from: postgres:production_db
+    name: customers
+    params:
+      pg_host: db.example.com
+      pg_port: "5432"
+      pg_db: production
+      pg_user: ${env:PG_USER}
+      pg_pass: ${env:PG_PASSWORD}
+      pg_sslmode: require  # Require TLS for database connection
+```
+
+## TLS Best Practices
+
+### 1. Use CA-Signed Certificates in Production
+
+<Warning>
+  Self-signed certificates should only be used for development and testing.
+</Warning>
+
+For production:
+- Use certificates from a trusted Certificate Authority
+- Consider Let's Encrypt for free, automated certificates
+- Use wildcard certificates for multiple subdomains
+
+### 2. Secure Private Keys
+
+- Store private keys with restrictive permissions (`chmod 600`)
+- Never commit private keys to version control
+- Use secret management systems (Kubernetes Secrets, AWS Secrets Manager, etc.)
+- Rotate certificates before expiration
+
+```bash
+# Set proper permissions
+chmod 600 /path/to/private-key.pem
+chown spice:spice /path/to/private-key.pem
+```
+
+### 3. Certificate Expiration Monitoring
+
+Monitor certificate expiration:
+
+```bash
+# Check certificate expiration
+openssl x509 -in certificate.pem -noout -enddate
+
+# Check certificate details
+openssl x509 -in certificate.pem -noout -text
+```
+
+Set up alerts for certificates expiring within 30 days.
+
+### 4. Enable TLS for All Environments
+
+While you may use self-signed certificates in development, always use TLS:
+
+```yaml
+# Development
+runtime:
+  tls:
+    enabled: true
+    certificate_file: ./dev-cert.pem
+    key_file: ./dev-key.pem
+
+# Production  
+runtime:
+  tls:
+    enabled: true
+    certificate_file: /etc/letsencrypt/live/api.example.com/fullchain.pem
+    key_file: /etc/letsencrypt/live/api.example.com/privkey.pem
+```
+
+### 5. Combine with Authentication
+
+Always use TLS with authentication:
+
+```yaml
+runtime:
+  tls:
+    enabled: true
+    certificate_file: /path/to/cert.pem
+    key_file: /path/to/key.pem
+  auth:
+    api_key:
+      enabled: true
+      keys:
+        - ${secrets:API_KEY}:rw
+```
+
+### 6. Client Certificate Validation
+
+Spice currently uses server-side TLS (runtime authenticates to clients). For mutual TLS (mTLS), consider using a reverse proxy like nginx or Envoy:
+
+```nginx
+server {
+    listen 443 ssl;
+    
+    ssl_certificate /path/to/server-cert.pem;
+    ssl_certificate_key /path/to/server-key.pem;
+    
+    # Client certificate validation
+    ssl_client_certificate /path/to/ca.pem;
+    ssl_verify_client on;
+    
+    location / {
+        proxy_pass https://spice:3000;
+    }
+}
+```
+
+## Troubleshooting
+
+### Certificate Validation Errors
+
+```bash
+# Error: certificate signed by unknown authority
+# Solution: Add CA certificate to system trust store or use full chain
+
+# Linux
+sudo cp ca-certificate.pem /usr/local/share/ca-certificates/spice-ca.crt
+sudo update-ca-certificates
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca-certificate.pem
+```
+
+### Private Key Format Issues
+
+```bash
+# Convert PKCS#8 to traditional format if needed
+openssl rsa -in key-pkcs8.pem -out key.pem
+
+# Convert encrypted key to unencrypted (for Spice)
+openssl rsa -in encrypted-key.pem -out unencrypted-key.pem
+```
+
+### Certificate Chain Issues
+
+Ensure your certificate file includes the full chain:
+
+```bash
+# Correct order in certificate.pem:
+# 1. Server certificate
+# 2. Intermediate certificate(s)
+# 3. Root certificate (optional)
+
+cat server-cert.pem intermediate-cert.pem > fullchain.pem
+```
+
+### Checking TLS Configuration
+
+Verify TLS is working:
+
+```bash
+# Test HTTPS endpoint
+curl -v https://localhost:3000/health
+
+# Test with openssl
+openssl s_client -connect localhost:3000 -servername localhost
+
+# Check certificate details
+echo | openssl s_client -connect localhost:3000 2>/dev/null | \
+  openssl x509 -noout -text
+```
+
+## Performance Considerations
+
+TLS adds computational overhead:
+
+- **CPU Usage**: Encryption/decryption increases CPU usage by 5-15%
+- **Latency**: Adds ~1-5ms per request for handshake and encryption
+- **Throughput**: Minimal impact on data transfer speeds
+
+For high-throughput scenarios:
+- Use hardware acceleration (AES-NI on modern CPUs)
+- Enable HTTP/2 for connection reuse
+- Consider TLS offloading with a reverse proxy
+
+## Related Resources
+
+- [Authentication](/advanced/authentication)
+- [Secrets Management](/advanced/secrets)
+- [Authorization](/advanced/authorization)
+- [Runtime Configuration](/reference/spicepod/runtime)
+- [Security Policy](https://github.com/spiceai/spiceai/blob/trunk/SECURITY.md)

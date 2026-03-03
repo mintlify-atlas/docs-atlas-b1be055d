@@ -1,0 +1,167 @@
+---
+title: 'Catalogs API'
+description: 'List registered data catalogs in the Spice runtime'
+---
+
+## Overview
+
+The Catalogs API provides an endpoint to list all registered data catalogs. Catalogs provide metadata about schemas and tables available from external data sources.
+
+## List Catalogs
+
+```
+GET /v1/catalogs
+```
+
+Returns a list of all registered catalogs in the runtime.
+
+### Query Parameters
+
+<ParamField query="from" type="string">
+  Filter catalogs by source provider (e.g., `spiceai`, `unity`, `databricks`)
+</ParamField>
+
+### Request Headers
+
+<ParamField header="Accept" type="string" default="application/json">
+  The desired response format:
+  - `application/json` - JSON array (default)
+  - `text/csv` - CSV format
+</ParamField>
+
+### Response
+
+<ResponseField name="(array)" type="array<object>">
+  Array of catalog information objects.
+
+  <ResponseField name="from" type="string">
+    The catalog provider (e.g., `spiceai`, `unity`, `databricks`, `postgres`)
+  </ResponseField>
+
+  <ResponseField name="name" type="string">
+    The name of the catalog as configured in the spicepod
+  </ResponseField>
+</ResponseField>
+
+### Response Example (JSON)
+
+```json
+[
+  {
+    "from": "spiceai",
+    "name": "spiceai"
+  },
+  {
+    "from": "databricks",
+    "name": "my_databricks_catalog"
+  },
+  {
+    "from": "unity",
+    "name": "unity_catalog"
+  }
+]
+```
+
+### Response Example (CSV)
+
+```csv
+from,name
+spiceai,spiceai
+databricks,my_databricks_catalog
+unity,unity_catalog
+```
+
+### Status Codes
+
+- **200 OK** - Catalogs retrieved successfully
+- **500 Internal Server Error** - App not initialized or unexpected error
+
+### Error Response (500)
+
+```json
+{
+  "error": "An unexpected error occurred while processing the catalogs"
+}
+```
+
+## Examples
+
+### List All Catalogs (JSON)
+
+```bash
+curl http://localhost:8090/v1/catalogs
+```
+
+### List All Catalogs (CSV)
+
+```bash
+curl -H "Accept: text/csv" http://localhost:8090/v1/catalogs
+```
+
+### Filter by Provider
+
+```bash
+curl http://localhost:8090/v1/catalogs?from=spiceai
+```
+
+```bash
+curl http://localhost:8090/v1/catalogs?from=databricks
+```
+
+## Use Cases
+
+### Discover Available Catalogs
+
+Use this endpoint to discover what data catalogs are available in your Spice runtime:
+
+```bash
+curl http://localhost:8090/v1/catalogs | jq '.[] | .name'
+```
+
+### Filter by Catalog Provider
+
+When working with multiple catalog types, filter by provider to find specific catalogs:
+
+```bash
+# List only Databricks catalogs
+curl http://localhost:8090/v1/catalogs?from=databricks
+
+# List only Spice.ai catalogs
+curl http://localhost:8090/v1/catalogs?from=spiceai
+```
+
+### Integration with Data Discovery Tools
+
+Export catalog information for data discovery and lineage tools:
+
+```bash
+# Export to CSV for analysis
+curl -H "Accept: text/csv" http://localhost:8090/v1/catalogs > catalogs.csv
+```
+
+### Programmatic Access
+
+```python
+import requests
+
+response = requests.get('http://localhost:8090/v1/catalogs')
+catalogs = response.json()
+
+for catalog in catalogs:
+    print(f"Catalog: {catalog['name']} (Provider: {catalog['from']})")
+```
+
+```javascript
+const response = await fetch('http://localhost:8090/v1/catalogs');
+const catalogs = await response.json();
+
+catalogs.forEach(catalog => {
+  console.log(`Catalog: ${catalog.name} (Provider: ${catalog.from})`);
+});
+```
+
+## Related APIs
+
+- [Datasets API](/api/datasets) - List datasets from configured data sources
+- [Models API](/api/models) - List available AI models
+- [HTTP Query API](/api/http-query) - Execute SQL queries across catalogs

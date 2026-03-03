@@ -1,0 +1,508 @@
+---
+title: 'Runtime Configuration'
+description: 'Configure Spice.ai runtime behavior and settings'
+---
+
+## Overview
+
+The Spice runtime (`spiced`) can be configured through command-line arguments, environment variables, and spicepod configuration files. This guide covers all available configuration options.
+
+## Command-Line Arguments
+
+### Network Binding
+
+#### HTTP Server
+
+```bash
+spiced --http 0.0.0.0:8090
+```
+
+- **Default**: `127.0.0.1:8090`
+- **Description**: HTTP/REST API endpoint for queries, health checks, and management
+- **Protocol**: HTTP/1.1
+
+#### Flight Server
+
+```bash
+spiced --flight 0.0.0.0:50051
+```
+
+- **Default**: `127.0.0.1:50051`
+- **Description**: Arrow Flight SQL and Flight RPC endpoint
+- **Protocol**: gRPC (HTTP/2)
+
+#### Metrics Server
+
+```bash
+spiced --metrics 0.0.0.0:9090
+```
+
+- **Default**: Not exposed by default
+- **Description**: Prometheus metrics endpoint
+- **Protocol**: HTTP/1.1
+
+### Cluster Mode
+
+See [Distributed Query](/deployment/distributed-query) for detailed cluster configuration.
+
+#### Scheduler
+
+```bash
+spiced \
+  --role scheduler \
+  --node-bind-address 0.0.0.0:50052 \
+  --node-advertise-address scheduler.example.com
+```
+
+#### Executor
+
+```bash
+spiced \
+  --role executor \
+  --scheduler-address https://scheduler.example.com:50052 \
+  --node-bind-address 0.0.0.0:50052 \
+  --node-advertise-address executor-1.example.com
+```
+
+#### mTLS Configuration
+
+```bash
+spiced \
+  --node-mtls-ca-certificate-file /path/to/ca-cert.pem \
+  --node-mtls-certificate-file /path/to/node-cert.pem \
+  --node-mtls-key-file /path/to/node-key.pem
+```
+
+## Environment Variables
+
+### Secrets
+
+Environment variables prefixed with `SPICE_SECRET_` are available as secrets:
+
+```bash
+export SPICE_SECRET_DATABASE_PASSWORD="mypassword"
+export SPICE_SECRET_API_KEY="sk-1234567890"
+```
+
+Reference in spicepod.yaml:
+
+```yaml
+secrets:
+  - from: env
+    name: env
+
+datasets:
+  - from: postgres:my_table
+    name: my_table
+    params:
+      connection_string: postgres://user:${env:SPICE_SECRET_DATABASE_PASSWORD}@host/db
+```
+
+### Data Connector Credentials
+
+Many connectors use standard environment variables:
+
+```bash
+# AWS S3
+export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+export AWS_REGION="us-west-2"
+
+# Azure
+export AZURE_STORAGE_ACCOUNT_NAME="myaccount"
+export AZURE_STORAGE_ACCOUNT_KEY="mykey"
+
+# Google Cloud
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+```
+
+## Spicepod Configuration
+
+### Runtime Settings
+
+Configure runtime behavior in spicepod.yaml:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my_app
+
+runtime:
+  # Query result caching
+  caching:
+    sql_results:
+      enabled: true
+      max_size: 128MB
+      item_ttl: 1s
+    search_results:
+      enabled: true
+      max_size: 128MB
+      item_ttl: 60s
+    embeddings:
+      enabled: true
+      max_size: 1GB
+      item_ttl: 3600s
+  
+  # Task history settings
+  task_history:
+    enabled: true
+    retention_period: 24h
+    max_task_runs: 1000
+  
+  # Query settings
+  query:
+    max_concurrent_queries: 100
+    timeout: 300s
+```
+
+### Acceleration Configuration
+
+#### In-Memory (Arrow)
+
+```yaml
+datasets:
+  - from: postgres:orders
+    name: orders
+    acceleration:
+      enabled: true
+      engine: arrow  # In-memory, fastest
+      refresh_mode: full
+      refresh_check_interval: 10s
+```
+
+Best for:
+- Small to medium datasets (< 10GB)
+- Highest query performance
+- Frequent updates
+
+#### File-Based (DuckDB)
+
+```yaml
+datasets:
+  - from: s3://my-bucket/data/
+    name: large_dataset
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/large_dataset.db
+      refresh_mode: full
+      refresh_check_interval: 1h
+```
+
+Best for:
+- Large datasets (10GB - 1TB)
+- Persistent storage required
+- Analytical queries (OLAP)
+
+#### File-Based (SQLite)
+
+```yaml
+datasets:
+  - from: postgres:transactions
+    name: transactions
+    acceleration:
+      enabled: true
+      engine: sqlite
+      mode: file
+      params:
+        sqlite_file: /data/transactions.db
+      refresh_mode: append
+      refresh_check_interval: 5s
+```
+
+Best for:
+- Transactional workloads (OLTP)
+- Point lookups and inserts
+- Row-level updates
+
+#### Spice Cayenne (Vortex)
+
+```yaml
+datasets:
+  - from: s3://analytics/clickstream/
+    name: clickstream
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+      params:
+        cayenne_path: /data/clickstream
+      refresh_mode: full
+      refresh_check_interval: 1h
+```
+
+Best for:
+- Very large datasets (> 1TB)
+- Columnar storage with compression
+- DuckDB-comparable performance
+
+#### PostgreSQL Acceleration
+
+```yaml
+datasets:
+  - from: s3://warehouse/sales/
+    name: sales
+    acceleration:
+      enabled: true
+      engine: postgres
+      params:
+        connection_string: postgres://user:pass@postgres-host:5432/spice
+      refresh_mode: full
+      refresh_check_interval: 30m
+```
+
+Best for:
+- Shared acceleration across multiple Spice instances
+- Transactional consistency requirements
+- Existing PostgreSQL infrastructure
+
+### Refresh Modes
+
+```yaml
+refresh_mode: full    # Replace all data
+refresh_mode: append  # Add new data only
+refresh_mode: changes # CDC-based incremental updates
+```
+
+### Caching Configuration
+
+#### Query Result Cache
+
+```yaml
+runtime:
+  caching:
+    sql_results:
+      enabled: true
+      max_size: 256MB    # Maximum cache size
+      item_ttl: 10s      # Time-to-live per cached result
+```
+
+Caches identical SQL query results to avoid re-execution.
+
+#### Search Result Cache
+
+```yaml
+runtime:
+  caching:
+    search_results:
+      enabled: true
+      max_size: 128MB
+      item_ttl: 300s     # 5 minutes
+```
+
+Caches vector and text search results.
+
+#### Embeddings Cache
+
+```yaml
+runtime:
+  caching:
+    embeddings:
+      enabled: true
+      max_size: 1GB
+      item_ttl: 86400s   # 24 hours
+```
+
+Caches generated embeddings to avoid recomputation.
+
+## Performance Tuning
+
+### Memory Settings
+
+```yaml
+runtime:
+  memory:
+    # Limit total memory usage for accelerated tables
+    max_acceleration_memory: 16GB
+    
+    # Memory pool for query execution
+    query_execution_memory: 4GB
+```
+
+### Parallelism
+
+```yaml
+runtime:
+  parallelism:
+    # Number of threads for query execution
+    # Default: Number of CPU cores
+    num_threads: 8
+    
+    # Number of threads for data refresh
+    refresh_threads: 4
+```
+
+### Connection Pooling
+
+```yaml
+datasets:
+  - from: postgres:orders
+    name: orders
+    params:
+      connection_string: postgres://host/db
+      # Connection pool settings
+      max_connections: 10
+      min_connections: 2
+      connection_timeout: 30s
+```
+
+## Security Configuration
+
+### Authentication
+
+See the [Authentication documentation](/security/authentication) for details on configuring authentication.
+
+### TLS/SSL
+
+Configure TLS for HTTP and Flight endpoints:
+
+```bash
+spiced \
+  --tls-certificate-file /path/to/cert.pem \
+  --tls-key-file /path/to/key.pem
+```
+
+## OpenTelemetry Export
+
+Export runtime metrics to OpenTelemetry collectors:
+
+```yaml
+runtime:
+  otel_exporter:
+    endpoint: http://otel-collector:4317
+    push_interval: 60s
+    metrics:
+      - spice_runtime_*
+      - dataset_*
+```
+
+Supported protocols:
+- gRPC: `http://host:4317` or `https://host:4317`
+- HTTP: `http://host:4318/v1/metrics`
+
+## Resource Limits
+
+### Query Limits
+
+```yaml
+runtime:
+  query:
+    max_concurrent_queries: 100
+    default_timeout: 300s
+    max_memory_per_query: 2GB
+```
+
+### Dataset Limits
+
+```yaml
+datasets:
+  - from: s3://large-bucket/data/
+    name: large_data
+    params:
+      max_partition_size: 1GB
+      max_file_size: 100MB
+```
+
+## Health Check Configuration
+
+The runtime provides two health endpoints:
+
+- **`/health`**: Returns "ok" when the runtime is alive
+- **`/v1/ready`**: Returns ready status when all datasets are loaded
+
+Configure readiness behavior:
+
+```yaml
+runtime:
+  readiness:
+    # Don't wait for all datasets to load
+    wait_for_datasets: false
+```
+
+## Logging Configuration
+
+Control log output:
+
+```bash
+# Set log level
+export RUST_LOG=info
+
+# Detailed logging for specific components
+export RUST_LOG=runtime=debug,datafusion=info
+
+# JSON-formatted logs
+export RUST_LOG_FORMAT=json
+```
+
+Log levels: `error`, `warn`, `info`, `debug`, `trace`
+
+## Complete Configuration Example
+
+```yaml
+version: v1
+kind: Spicepod
+name: production-app
+
+runtime:
+  caching:
+    sql_results:
+      enabled: true
+      max_size: 512MB
+      item_ttl: 30s
+    search_results:
+      enabled: true
+      max_size: 256MB
+      item_ttl: 300s
+    embeddings:
+      enabled: true
+      max_size: 2GB
+      item_ttl: 86400s
+  
+  query:
+    max_concurrent_queries: 100
+    default_timeout: 600s
+  
+  task_history:
+    enabled: true
+    retention_period: 168h  # 7 days
+  
+  otel_exporter:
+    endpoint: http://otel-collector:4317
+    push_interval: 60s
+
+datasets:
+  - from: postgres:transactions
+    name: transactions
+    params:
+      connection_string: ${env:POSTGRES_URL}
+      max_connections: 20
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/transactions.db
+      refresh_mode: append
+      refresh_check_interval: 10s
+  
+  - from: s3://analytics/clickstream/
+    name: clickstream
+    params:
+      file_format: parquet
+    acceleration:
+      enabled: true
+      engine: cayenne
+      mode: file
+      params:
+        cayenne_path: /data/clickstream
+      refresh_mode: full
+      refresh_check_interval: 1h
+```
+
+## Next Steps
+
+- [Monitoring](/deployment/monitoring) - Set up observability and metrics
+- [Distributed Query](/deployment/distributed-query) - Multi-node deployments
+- [Docker Deployment](/deployment/docker) - Container deployment

@@ -1,0 +1,437 @@
+---
+title: 'Hybrid Search'
+description: 'Combine vector and full-text search using Reciprocal Rank Fusion (RRF)'
+---
+
+Hybrid search combines multiple search methods—typically vector similarity and full-text search—using Reciprocal Rank Fusion (RRF) to achieve better relevance than any single method alone.
+
+## Why Hybrid Search?
+
+Different search methods excel at different tasks:
+
+- **Vector Search**: Understands meaning and semantics
+  - "laptop" finds "notebook computer", "portable PC"
+  - Captures synonyms and related concepts
+  - Better for natural language queries
+
+- **Full-Text Search**: Precise keyword matching
+  - "SKU-12345" exact match
+  - Technical terms and acronyms
+  - Better for specific terminology
+
+**Hybrid search combines both** to get accurate keyword matches AND semantic understanding.
+
+## Reciprocal Rank Fusion (RRF)
+
+RRF merges results from multiple search methods by:
+
+1. Ranking results from each method independently
+2. Computing a fused score based on rank position (not raw scores)
+3. Re-ranking by the combined score
+
+### RRF Formula
+
+For each document:
+
+```
+RRF_score = Σ(1 / (rank_i + k))
+```
+
+Where:
+- `rank_i` = position in the i-th result set (1, 2, 3, ...)
+- `k` = constant (default: 60)
+- Σ = sum across all search methods
+
+### Benefits
+
+- **Score-independent**: Doesn't require normalizing different score scales
+- **Position-based**: Top results in any method get high weight
+- **Robust**: Poor results in one method don't dominate
+- **Simple**: No tuning required
+
+## Configuration
+
+Enable both vector and full-text search in your spicepod.yaml:
+
+```yaml
+datasets:
+  - name: documents
+    from: postgres:documents
+    acceleration:
+      enabled: true
+    
+    # Vector search configuration
+    embeddings:
+      - column: content
+        model:
+          from: openai
+          name: text-embedding-3-small
+    
+    # Full-text search configuration
+    search:
+      full_text:
+        enabled: true
+        columns:
+          - content
+```
+
+## Using Hybrid Search
+
+Spice automatically performs RRF when you query both search methods:
+
+### Simple Hybrid Query
+
+```sql
+-- Combine vector and text search results
+WITH vector_results AS (
+  SELECT id, title, _score as vector_score
+  FROM vector_search(documents, 'machine learning algorithms')
+  LIMIT 100
+),
+text_results AS (
+  SELECT id, title, _score as text_score
+  FROM text_search(documents, 'machine learning algorithms')
+  LIMIT 100
+)
+SELECT 
+  COALESCE(v.id, t.id) as id,
+  COALESCE(v.title, t.title) as title,
+  v.vector_score,
+  t.text_score
+FROM vector_results v
+FULL OUTER JOIN text_results t ON v.id = t.id
+ORDER BY 
+  (1.0 / (ROW_NUMBER() OVER (ORDER BY v.vector_score DESC NULLS LAST) + 60)) +
+  (1.0 / (ROW_NUMBER() OVER (ORDER BY t.text_score DESC NULLS LAST) + 60))
+  DESC;
+```
+
+### Built-in RRF Support
+
+Spice can automatically fuse results when searching multiple columns:
+
+```yaml
+# Multi-column search with automatic RRF
+datasets:
+  - name: products
+    embeddings:
+      - column: title
+      - column: description
+    search:
+      full_text:
+        enabled: true
+        columns: [title, description]
+```
+
+Query merges results automatically:
+
+```sql
+-- Searches both vector and text indexes across columns
+SELECT * FROM vector_search(products, 'wireless headphones')
+LIMIT 10;
+```
+
+## Manual RRF Implementation
+
+For explicit control over RRF:
+
+```sql
+WITH 
+-- Get top 100 from vector search
+vector_results AS (
+  SELECT 
+    id,
+    ROW_NUMBER() OVER (ORDER BY _score DESC) as vector_rank
+  FROM vector_search(documents, 'neural networks deep learning')
+  LIMIT 100
+),
+-- Get top 100 from text search
+text_results AS (
+  SELECT 
+    id,
+    ROW_NUMBER() OVER (ORDER BY _score DESC) as text_rank
+  FROM text_search(documents, 'neural networks deep learning')
+  LIMIT 100
+),
+-- Compute RRF scores
+rrf_scores AS (
+  SELECT 
+    COALESCE(v.id, t.id) as id,
+    COALESCE(1.0 / (v.vector_rank + 60), 0) + 
+    COALESCE(1.0 / (t.text_rank + 60), 0) as rrf_score
+  FROM vector_results v
+  FULL OUTER JOIN text_results t ON v.id = t.id
+)
+-- Join back to get full document data
+SELECT 
+  d.id,
+  d.title,
+  d.content,
+  r.rrf_score
+FROM rrf_scores r
+JOIN documents d ON r.id = d.id
+ORDER BY r.rrf_score DESC
+LIMIT 10;
+```
+
+## Tuning RRF
+
+### Adjusting the k Parameter
+
+The constant `k` (default: 60) controls how quickly scores diminish:
+
+- **Lower k** (e.g., 20): Top results get more weight, sharper dropoff
+- **Higher k** (e.g., 100): More uniform weighting, gentler dropoff
+- **Default k=60**: Balanced for most use cases
+
+```sql
+-- RRF with k=20 (favor top results)
+SELECT 
+  id,
+  COALESCE(1.0 / (vector_rank + 20), 0) + 
+  COALESCE(1.0 / (text_rank + 20), 0) as rrf_score
+FROM ...
+```
+
+### Weighting Search Methods
+
+Give more weight to one method:
+
+```sql
+-- 70% vector, 30% text
+SELECT 
+  id,
+  (0.7 * COALESCE(1.0 / (vector_rank + 60), 0)) + 
+  (0.3 * COALESCE(1.0 / (text_rank + 60), 0)) as weighted_score
+FROM ...
+```
+
+### Pre-filtering
+
+Filter before fusion for better performance:
+
+```sql
+WITH vector_results AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM vector_search(documents, 'query')
+  WHERE category = 'technical'  -- Pre-filter
+  LIMIT 100
+),
+text_results AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM text_search(documents, 'query')
+  WHERE category = 'technical'  -- Same filter
+  LIMIT 100
+)
+-- RRF fusion...
+```
+
+## Multi-Column Hybrid Search
+
+Combine searches across different columns:
+
+```yaml
+datasets:
+  - name: support_tickets
+    embeddings:
+      - column: title
+      - column: description
+    search:
+      full_text:
+        enabled: true
+        columns: [title, description]
+```
+
+```sql
+-- Search title with vector, description with text
+WITH 
+title_vector AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM vector_search(support_tickets, 'billing problem', title)
+  LIMIT 50
+),
+desc_text AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM text_search(support_tickets, 'invoice payment', description)
+  LIMIT 50
+)
+SELECT 
+  COALESCE(v.id, t.id) as id,
+  COALESCE(1.0/(v.rank+60), 0) + COALESCE(1.0/(t.rank+60), 0) as score
+FROM title_vector v
+FULL OUTER JOIN desc_text t ON v.id = t.id
+ORDER BY score DESC
+LIMIT 10;
+```
+
+## Performance Optimization
+
+### Limit Early
+
+Limit each search method before fusion:
+
+```sql
+-- Good: Limit before fusion
+WITH vector_results AS (
+  SELECT * FROM vector_search(docs, 'query') LIMIT 100
+),
+text_results AS (
+  SELECT * FROM text_search(docs, 'query') LIMIT 100
+)
+-- RRF on 100 + 100 results
+```
+
+### Parallel Execution
+
+CTEs can execute in parallel:
+
+```sql
+-- These can run concurrently
+WITH 
+vector_results AS (SELECT * FROM vector_search(...)),
+text_results AS (SELECT * FROM text_search(...))
+-- Fusion
+```
+
+### Accelerate Base Tables
+
+```yaml
+datasets:
+  - name: documents
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+```
+
+## Examples
+
+### E-commerce Product Search
+
+```sql
+-- Find products using hybrid search
+WITH 
+vector_results AS (
+  SELECT 
+    id,
+    name,
+    ROW_NUMBER() OVER (ORDER BY _score DESC) as v_rank
+  FROM vector_search(products, 'comfortable running shoes')
+  WHERE price < 150
+  LIMIT 50
+),
+text_results AS (
+  SELECT 
+    id,
+    name,
+    ROW_NUMBER() OVER (ORDER BY _score DESC) as t_rank
+  FROM text_search(products, 'running shoes cushioned')
+  WHERE price < 150
+  LIMIT 50
+)
+SELECT 
+  p.id,
+  p.name,
+  p.description,
+  p.price,
+  COALESCE(1.0/(v.v_rank+60), 0) + COALESCE(1.0/(t.t_rank+60), 0) as score
+FROM products p
+LEFT JOIN vector_results v ON p.id = v.id
+LEFT JOIN text_results t ON p.id = t.id
+WHERE v.id IS NOT NULL OR t.id IS NOT NULL
+ORDER BY score DESC
+LIMIT 10;
+```
+
+### Knowledge Base Search
+
+```sql
+-- RAG context retrieval with hybrid search
+WITH 
+vector_hits AS (
+  SELECT id, content, _score, 
+         ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM vector_search(knowledge_base, 'how to configure authentication')
+  LIMIT 100
+),
+text_hits AS (
+  SELECT id, content, _score,
+         ROW_NUMBER() OVER (ORDER BY _score DESC) as rank
+  FROM text_search(knowledge_base, 'authentication configuration')
+  LIMIT 100
+)
+SELECT 
+  COALESCE(v.id, t.id) as id,
+  COALESCE(v.content, t.content) as content,
+  (COALESCE(1.0/(v.rank+60), 0) + COALESCE(1.0/(t.rank+60), 0)) as hybrid_score
+FROM vector_hits v
+FULL OUTER JOIN text_hits t ON v.id = t.id
+ORDER BY hybrid_score DESC
+LIMIT 5;
+```
+
+### Customer Support Ticket Search
+
+```sql
+-- Find relevant support tickets
+WITH
+vector_search_results AS (
+  SELECT ticket_id, title, description,
+         ROW_NUMBER() OVER (ORDER BY _score DESC) as v_rank
+  FROM vector_search(tickets, 'user unable to login to account')
+  WHERE status = 'resolved'
+  LIMIT 50
+),
+text_search_results AS (
+  SELECT ticket_id, title, description,
+         ROW_NUMBER() OVER (ORDER BY _score DESC) as t_rank
+  FROM text_search(tickets, 'login authentication error')
+  WHERE status = 'resolved'
+  LIMIT 50
+)
+SELECT 
+  COALESCE(v.ticket_id, t.ticket_id) as ticket_id,
+  COALESCE(v.title, t.title) as title,
+  COALESCE(v.description, t.description) as description,
+  (COALESCE(1.0/(v.v_rank+60), 0) + COALESCE(1.0/(t.t_rank+60), 0)) as relevance
+FROM vector_search_results v
+FULL OUTER JOIN text_search_results t ON v.ticket_id = t.ticket_id
+ORDER BY relevance DESC
+LIMIT 10;
+```
+
+## Comparison: Single vs Hybrid Search
+
+| Query Type | Vector Only | Text Only | Hybrid (RRF) |
+|------------|-------------|-----------|-------------|
+| "laptop computer" | ✅ Finds synonyms | ⚠️ Exact keywords | ✅ Best of both |
+| "SKU-12345" | ❌ Poor on codes | ✅ Exact match | ✅ Balanced |
+| "how to reset password" | ✅ Understands intent | ⚠️ Keywords only | ✅ Most relevant |
+| "neural networks" | ✅ Related concepts | ✅ Exact term | ✅ Comprehensive |
+
+## Troubleshooting
+
+### One method dominates results
+
+- Adjust RRF weights to favor the other method
+- Increase k parameter for more uniform scoring
+- Check if one index has significantly more results
+
+### No results returned
+
+- Verify both search indexes exist
+- Check individual searches work: `SELECT * FROM vector_search(...)` and `SELECT * FROM text_search(...)`
+- Ensure both methods return results before fusion
+
+### Slow performance
+
+- Limit results from each method before fusion (50-100 is typical)
+- Enable dataset acceleration
+- Add pre-filters to reduce search space
+- Use partitioning for large datasets
+
+## See Also
+
+- [Vector Search](/search/vector-search) - Semantic similarity search
+- [Full-Text Search](/search/full-text-search) - BM25 keyword ranking
+- [Amazon S3 Vectors](/search/s3-vectors) - Petabyte-scale vector storage

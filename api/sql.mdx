@@ -1,0 +1,341 @@
+---
+title: 'SQL Query API'
+description: 'Execute SQL queries via HTTP endpoint'
+---
+
+The SQL Query API allows you to execute SQL queries against Spice.ai datasets using HTTP requests. It supports multiple response formats and parameterized queries.
+
+## Endpoint
+
+```
+POST http://localhost:8090/v1/sql
+```
+
+## Default Ports
+
+| Service | Port | Description |
+|---------|------|-------------|
+| HTTP API | 8090 | SQL queries, health checks |
+| Arrow Flight | 50051 | Flight and Flight SQL |
+| Metrics | 9090 | Prometheus metrics |
+
+## Authentication
+
+Spice supports optional API key authentication for HTTP endpoints.
+
+### Using API Keys
+
+Include the API key in the `X-API-Key` header:
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM my_table LIMIT 10"
+```
+
+Refer to the [Authentication documentation](https://spiceai.org/docs) for setup instructions.
+
+## Request Format
+
+### Plain Text Query
+
+Send SQL as plain text in the request body:
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: text/plain" \
+  -d "SELECT avg(total_amount), passenger_count FROM taxi_trips GROUP BY passenger_count LIMIT 3"
+```
+
+### Parameterized Query (JSON)
+
+Use parameterized queries to prevent SQL injection and improve query plan reuse:
+
+#### Positional Parameters
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT * FROM taxi_trips WHERE passenger_count = $1 LIMIT $2",
+    "parameters": [2, 10]
+  }'
+```
+
+#### Named Parameters
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT :foo + 1 AS the_answer",
+    "parameters": {"foo": 41}
+  }'
+```
+
+## Response Formats
+
+Control the response format using the `Accept` header.
+
+### JSON (Default)
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Accept: application/json" \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM taxi_trips LIMIT 2"
+```
+
+**Response:**
+```json
+[
+  {
+    "passenger_count": 1,
+    "trip_distance": 1.5,
+    "total_amount": 12.30
+  },
+  {
+    "passenger_count": 2,
+    "trip_distance": 3.2,
+    "total_amount": 18.75
+  }
+]
+```
+
+### JSON with Schema
+
+Include schema information in the response:
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Accept: application/vnd.spiceai.sql.v1+json" \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM taxi_trips LIMIT 2"
+```
+
+**Response:**
+```json
+{
+  "row_count": 2,
+  "schema": {
+    "fields": [
+      {
+        "name": "passenger_count",
+        "data_type": "Int64",
+        "nullable": false
+      },
+      {
+        "name": "trip_distance",
+        "data_type": "Float64",
+        "nullable": false
+      },
+      {
+        "name": "total_amount",
+        "data_type": "Float64",
+        "nullable": false
+      }
+    ]
+  },
+  "data": [
+    {
+      "passenger_count": 1,
+      "trip_distance": 1.5,
+      "total_amount": 12.30
+    },
+    {
+      "passenger_count": 2,
+      "trip_distance": 3.2,
+      "total_amount": 18.75
+    }
+  ]
+}
+```
+
+### CSV
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Accept: text/csv" \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM taxi_trips LIMIT 2"
+```
+
+**Response:**
+```csv
+"passenger_count","trip_distance","total_amount"
+1,1.5,12.30
+2,3.2,18.75
+```
+
+### Plain Text (Table)
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Accept: text/plain" \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM taxi_trips LIMIT 2"
+```
+
+**Response:**
+```
++------------------+----------------+--------------+
+| passenger_count  | trip_distance  | total_amount |
++------------------+----------------+--------------+
+| 1                | 1.5            | 12.30        |
++------------------+----------------+--------------+
+| 2                | 3.2            | 18.75        |
++------------------+----------------+--------------+
+```
+
+## Client Libraries
+
+### Python
+
+```python
+import requests
+import json
+
+url = "http://localhost:8090/v1/sql"
+
+# Simple query
+response = requests.post(
+    url,
+    headers={"Content-Type": "text/plain"},
+    data="SELECT * FROM taxi_trips LIMIT 10"
+)
+data = response.json()
+
+# Parameterized query
+response = requests.post(
+    url,
+    headers={"Content-Type": "application/json"},
+    json={
+        "sql": "SELECT * FROM taxi_trips WHERE passenger_count = $1 LIMIT $2",
+        "parameters": [2, 10]
+    }
+)
+data = response.json()
+```
+
+### JavaScript/TypeScript
+
+```typescript
+const url = "http://localhost:8090/v1/sql";
+
+// Simple query
+const response = await fetch(url, {
+  method: "POST",
+  headers: { "Content-Type": "text/plain" },
+  body: "SELECT * FROM taxi_trips LIMIT 10"
+});
+const data = await response.json();
+
+// Parameterized query
+const response = await fetch(url, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    sql: "SELECT * FROM taxi_trips WHERE passenger_count = $1 LIMIT $2",
+    parameters: [2, 10]
+  })
+});
+const data = await response.json();
+```
+
+### Go
+
+```go
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "io"
+    "net/http"
+)
+
+type ParameterizedQuery struct {
+    SQL        string        `json:"sql"`
+    Parameters []interface{} `json:"parameters"`
+}
+
+func main() {
+    url := "http://localhost:8090/v1/sql"
+
+    // Parameterized query
+    query := ParameterizedQuery{
+        SQL:        "SELECT * FROM taxi_trips WHERE passenger_count = $1 LIMIT $2",
+        Parameters: []interface{}{2, 10},
+    }
+
+    jsonData, _ := json.Marshal(query)
+    resp, _ := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+    defer resp.Body.Close()
+
+    body, _ := io.ReadAll(resp.Body)
+    // Parse response
+}
+```
+
+### Rust
+
+```rust
+use reqwest;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let url = "http://localhost:8090/v1/sql";
+
+    // Parameterized query
+    let response = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "sql": "SELECT * FROM taxi_trips WHERE passenger_count = $1 LIMIT $2",
+            "parameters": [2, 10]
+        }))
+        .send()
+        .await?;
+
+    let data: serde_json::Value = response.json().await?;
+    println!("Results: {:?}", data);
+
+    Ok(())
+}
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Invalid SQL syntax or parameters:
+
+```json
+"Error: SQL parser error: Expected SELECT, found invalid"
+```
+
+### 500 Internal Server Error
+
+Query execution error:
+
+```json
+"Unexpected internal server error occurred"
+```
+
+## Best Practices
+
+1. **Use parameterized queries** to prevent SQL injection and improve performance
+2. **Specify the Accept header** explicitly for consistent response formats
+3. **Use API keys** in production environments for security
+4. **Limit result set sizes** with `LIMIT` clauses for large datasets
+5. **Enable query caching** in the Spice configuration for frequently-run queries
+
+## Related APIs
+
+- [Arrow Flight API](/api/arrow-flight) - High-performance binary data transfer
+- [Arrow Flight SQL API](/api/arrow-flight-sql) - SQL over Arrow Flight
+- [ODBC Connectivity](/api/odbc) - Standard database connectivity
+- [JDBC Connectivity](/api/jdbc) - Java database connectivity

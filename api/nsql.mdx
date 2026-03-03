@@ -1,0 +1,424 @@
+---
+title: "Natural Language to SQL (NSQL)"
+description: "Convert natural language queries to SQL and execute them"
+---
+
+Spice's NSQL (Natural Language to SQL) API converts natural language questions into SQL queries and optionally executes them against your data. This enables users to query data using plain English without writing SQL.
+
+## Endpoint
+
+```
+POST /v1/nsql
+```
+
+## Authentication
+
+Include your Spice API key in the request headers:
+
+```bash
+Authorization: Bearer <your-api-key>
+```
+
+## Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | Yes | - | The natural language query to convert to SQL |
+| `model` | string | No | `"nql"` | The model to use for SQL generation |
+| `stream` | boolean | No | `false` | Whether to stream the response as Server-Sent Events |
+| `sample_data_enabled` | boolean | No | `true` | Include sample data in the context for better SQL generation |
+| `datasets` | array | No | All datasets | Specific datasets to sample from (does not restrict query targets) |
+
+## Request Body
+
+```json
+{
+  "query": "Get the top 5 customers by total sales",
+  "model": "nql",
+  "stream": false,
+  "sample_data_enabled": true,
+  "datasets": ["sales_data"]
+}
+```
+
+## Response Formats
+
+The response format depends on the `Accept` header:
+
+- `application/json` (default) - Query results as JSON array
+- `application/vnd.spiceai.nsql.v1+json` - Extended response with schema and SQL
+- `application/sql` - Only the generated SQL query (does not execute)
+- `text/csv` - Results in CSV format
+- `text/plain` - Plain text format
+- `text/event-stream` - Streaming response (when `stream: true`)
+
+### Standard JSON Response (application/json)
+
+```json
+[
+  {
+    "customer_id": "12345",
+    "total_sales": 150000
+  },
+  {
+    "customer_id": "67890",
+    "total_sales": 125000
+  }
+]
+```
+
+### Extended Response (application/vnd.spiceai.nsql.v1+json)
+
+```json
+{
+  "row_count": 2,
+  "schema": {
+    "fields": [
+      {
+        "name": "customer_id",
+        "data_type": "String",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      },
+      {
+        "name": "total_sales",
+        "data_type": "Int64",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      }
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "12345",
+      "total_sales": 150000
+    },
+    {
+      "customer_id": "67890",
+      "total_sales": 125000
+    }
+  ],
+  "sql": "SELECT customer_id, SUM(total_sales) AS total_sales\nFROM sales_data\nGROUP BY customer_id\nORDER BY total_sales DESC\nLIMIT 5"
+}
+```
+
+### SQL Only Response (application/sql)
+
+```sql
+SELECT customer_id, SUM(total_sales) AS total_sales
+FROM sales_data
+GROUP BY customer_id
+ORDER BY total_sales DESC
+LIMIT 5
+```
+
+## Examples
+
+### Execute Query and Get Results
+
+#### cURL
+
+```bash
+curl -X POST http://localhost:8090/v1/nsql \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "query": "Show me the top 10 products by revenue this month",
+    "model": "nql",
+    "sample_data_enabled": true
+  }'
+```
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/nsql"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer <your-api-key>"
+}
+payload = {
+    "query": "What are the average order values by region?",
+    "model": "nql",
+    "sample_data_enabled": True,
+    "datasets": ["orders", "customers"]
+}
+
+response = requests.post(url, json=payload, headers=headers)
+results = response.json()
+
+for row in results:
+    print(row)
+```
+
+#### Node.js
+
+```javascript
+const axios = require('axios');
+
+const url = 'http://localhost:8090/v1/nsql';
+const headers = {
+  'Content-Type': 'application/json',
+  'Authorization': 'Bearer <your-api-key>'
+};
+const data = {
+  query: 'List customers who made purchases in the last 30 days',
+  model: 'nql',
+  sample_data_enabled: true
+};
+
+axios.post(url, data, { headers })
+  .then(response => {
+    console.log('Results:', response.data);
+  })
+  .catch(error => {
+    console.error('Error:', error.response.data);
+  });
+```
+
+### Get SQL Without Executing
+
+#### cURL
+
+```bash
+curl -X POST http://localhost:8090/v1/nsql \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/sql" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "query": "Find the total revenue by product category"
+  }'
+```
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/nsql"
+headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/sql",
+    "Authorization": "Bearer <your-api-key>"
+}
+payload = {
+    "query": "Which products have low inventory?"
+}
+
+response = requests.post(url, json=payload, headers=headers)
+sql_query = response.text
+
+print("Generated SQL:")
+print(sql_query)
+```
+
+### Get Extended Response with Schema
+
+#### cURL
+
+```bash
+curl -X POST http://localhost:8090/v1/nsql \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/vnd.spiceai.nsql.v1+json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "query": "Show sales trends over the last quarter"
+  }'
+```
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8090/v1/nsql"
+headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/vnd.spiceai.nsql.v1+json",
+    "Authorization": "Bearer <your-api-key>"
+}
+payload = {
+    "query": "What is the customer churn rate by segment?"
+}
+
+response = requests.post(url, json=payload, headers=headers)
+result = response.json()
+
+print(f"Row count: {result['row_count']}")
+print(f"SQL: {result['sql']}")
+print(f"Data: {result['data']}")
+```
+
+### Streaming Response
+
+#### Python
+
+```python
+import requests
+import json
+
+url = "http://localhost:8090/v1/nsql"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer <your-api-key>"
+}
+payload = {
+    "query": "Show all active users",
+    "stream": True
+}
+
+response = requests.post(url, json=payload, headers=headers, stream=True)
+
+for line in response.iter_lines():
+    if line:
+        # Remove 'data: ' prefix
+        data_str = line.decode('utf-8').replace('data: ', '')
+        try:
+            data = json.loads(data_str)
+            print(data)
+        except json.JSONDecodeError:
+            pass
+```
+
+## How NSQL Works
+
+1. **Schema Analysis**: The model receives table schemas for available datasets
+2. **Sample Data**: If enabled, sample data is included to understand data patterns
+3. **SQL Generation**: The LLM generates SQL based on the natural language query
+4. **Validation**: The generated SQL is cleaned and validated
+5. **Execution**: The SQL is executed against your data (unless SQL-only mode)
+6. **Retry Logic**: If execution fails, the model retries with error context (up to 10 attempts)
+7. **Results**: Query results are returned in the requested format
+
+## Sample Data Context
+
+When `sample_data_enabled: true`, the model receives:
+
+- **Distinct column values**: Up to 3 distinct values per column (limited columns)
+- **Random samples**: 3 random rows from each dataset
+
+This helps the model:
+- Understand data types and formats
+- Generate accurate filters and conditions
+- Use correct column names and values
+
+## Dataset Filtering
+
+The `datasets` parameter is a sampling hint, not a query restriction:
+
+```json
+{
+  "query": "Show customer purchases",
+  "datasets": ["customers", "orders"]
+}
+```
+
+This tells NSQL to sample from `customers` and `orders` tables, but the generated query can still reference other tables if needed.
+
+## Model Configuration
+
+NSQL models must be configured in your Spicepod with dataset access:
+
+```yaml
+models:
+  - name: nql
+    from: openai:gpt-4
+    datasets:
+      - sales_data
+      - customers
+      - products
+```
+
+The `datasets` field restricts which tables the model can query. If empty, all tables are accessible.
+
+## Error Responses
+
+### Model Not Found (400)
+
+```
+Model custom_model not found
+```
+
+### Dataset Not Found (400)
+
+```
+Dataset 'unknown_table' not found
+```
+
+### No Query Generated (500)
+
+```
+No query produced from NSQL model
+```
+
+### Query Execution Error (400)
+
+If the query fails after retries, the error from the last attempt is returned:
+
+```
+Error executing query: column 'invalid_column' does not exist
+```
+
+## Best Practices
+
+1. **Enable sample data**: Improves SQL generation accuracy for complex queries
+2. **Specify datasets**: Limit context to relevant tables for better performance
+3. **Use descriptive queries**: "Show top 10 customers by revenue in 2024" is better than "top customers"
+4. **Configure model datasets**: Restrict table access in the model configuration for security
+5. **Handle errors**: NSQL may fail if the query is ambiguous or data doesn't match expectations
+6. **Review generated SQL**: Use `Accept: application/sql` to review queries before execution
+7. **Start simple**: Test with simple queries before attempting complex aggregations
+
+## Advanced: Custom NQL Models
+
+You can configure custom models for NSQL:
+
+```yaml
+models:
+  - name: custom_nql
+    from: openai:gpt-4-turbo
+    datasets:
+      - specific_dataset
+    params:
+      temperature: 0.1
+      max_tokens: 500
+```
+
+Lower temperature values (0.0-0.3) typically work better for SQL generation tasks.
+
+## Streaming for Long-Running Queries
+
+Use streaming for queries that may take time:
+
+```bash
+curl -X POST http://localhost:8090/v1/nsql \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -N \
+  -d '{
+    "query": "Analyze all transactions for anomalies",
+    "stream": true
+  }'
+```
+
+Streaming sends Server-Sent Events as the query executes, preventing timeouts and providing progress feedback.
+
+## Retry Mechanism
+
+NSQL automatically retries failed queries up to 10 times, incorporating error feedback:
+
+1. Generate SQL from natural language
+2. Execute the SQL
+3. If execution fails, provide the error to the model
+4. Model generates corrected SQL
+5. Repeat until success or max retries
+
+This allows the model to self-correct common issues like:
+- Incorrect column names
+- Missing table aliases
+- Invalid aggregations
+- Type mismatches

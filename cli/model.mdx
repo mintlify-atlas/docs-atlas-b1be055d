@@ -1,0 +1,325 @@
+---
+title: 'spice model'
+description: 'Manage ML models in the Spice runtime'
+---
+
+The `spice model` command lists and manages machine learning models loaded by the Spice runtime.
+
+## Usage
+
+```bash
+spice models [OPTIONS]
+```
+
+Note: The command is `models` (plural), not `model`.
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output <FORMAT>` | `table` | Output format: `table` or `json` |
+
+## Global Options
+
+Inherits [global flags](/cli/overview#global-flags):
+
+- `--http-endpoint <URL>` - Runtime HTTP endpoint
+- `--api-key <KEY>` - API key for authentication
+- `--cloud` - Connect to Spice Cloud
+
+## Output Fields
+
+| Field | Description |
+|-------|-------------|
+| **ID** | Model identifier |
+| **OWNED_BY** | Model provider (e.g., `openai`, `huggingface`) |
+| **STATUS** | Loading status: `ready`, `loading`, `error` |
+| **ERROR** | Error message if status is `error` |
+
+## Examples
+
+### List Models (Table Format)
+
+```bash
+spice models
+```
+
+**Output:**
+```
++-------------------------+-------------+---------+-------+
+| ID                      | OWNED_BY    | STATUS  | ERROR |
++-------------------------+-------------+---------+-------+
+| minilm                  | huggingface | ready   |       |
+| text-embedding-ada-002  | openai      | ready   |       |
+| gpt-4                   | openai      | ready   |       |
++-------------------------+-------------+---------+-------+
+```
+
+### List Models (JSON Format)
+
+```bash
+spice models -o json
+```
+
+**Output:**
+```json
+[
+  {
+    "id": "minilm",
+    "owned_by": "huggingface",
+    "status": "ready",
+    "error_message": null
+  },
+  {
+    "id": "text-embedding-ada-002",
+    "owned_by": "openai",
+    "status": "ready",
+    "error_message": null
+  },
+  {
+    "id": "gpt-4",
+    "owned_by": "openai",
+    "status": "ready",
+    "error_message": null
+  }
+]
+```
+
+### Model with Error
+
+```bash
+spice models
+```
+
+**Output:**
+```
++-------------------------+-------------+---------+---------------------------------------+
+| ID                      | OWNED_BY    | STATUS  | ERROR                                 |
++-------------------------+-------------+---------+---------------------------------------+
+| minilm                  | huggingface | ready   |                                       |
+| custom-model            | local       | error   | Failed to load model: File not found  |
++-------------------------+-------------+---------+---------------------------------------+
+```
+
+### Connect to Remote Runtime
+
+```bash
+spice models --http-endpoint http://remote-host:8090
+```
+
+### Connect to Spice Cloud
+
+```bash
+export SPICE_API_KEY=your_api_key
+spice models --cloud
+```
+
+## Model Status
+
+| Status | Description |
+|--------|-------------|
+| `loading` | Model is being loaded into memory |
+| `ready` | Model is loaded and ready for inference |
+| `error` | Model failed to load (see ERROR column) |
+
+## Model Configuration
+
+Models are defined in `spicepod.yaml`:
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+models:
+  # Embedding model from Hugging Face
+  - from: huggingface:huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+
+  # OpenAI model (requires API key)
+  - from: openai:text-embedding-ada-002
+    name: ada
+    params:
+      openai_api_key: ${OPENAI_API_KEY}
+
+  # Local ONNX model
+  - from: file:./models/my-model.onnx
+    name: custom-model
+```
+
+## Model Providers
+
+### Hugging Face
+
+```yaml
+models:
+  - from: huggingface:huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+```
+
+### OpenAI
+
+```yaml
+models:
+  - from: openai:text-embedding-ada-002
+    name: ada
+    params:
+      openai_api_key: ${OPENAI_API_KEY}
+```
+
+### Local Files
+
+```yaml
+models:
+  - from: file:./models/model.onnx
+    name: my-model
+```
+
+### Ollama
+
+```yaml
+models:
+  - from: ollama:llama2
+    name: llama2
+    params:
+      ollama_endpoint: http://localhost:11434
+```
+
+## Using Models
+
+### Embeddings
+
+Generate embeddings via HTTP API:
+
+```bash
+curl -X POST http://localhost:8090/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minilm",
+    "input": "Hello, world!"
+  }'
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [0.123, 0.456, ...],
+      "index": 0
+    }
+  ],
+  "model": "minilm",
+  "usage": {
+    "prompt_tokens": 3,
+    "total_tokens": 3
+  }
+}
+```
+
+### Chat Completions
+
+```bash
+curl -X POST http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [
+      {"role": "user", "content": "What is Spice.ai?"}
+    ]
+  }'
+```
+
+### Search with Embeddings
+
+Models are automatically used for semantic search:
+
+```bash
+spice search --model minilm
+```
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success |
+| `1` | Runtime unavailable or connection error |
+
+## Troubleshooting
+
+### Runtime Unavailable
+
+```
+Error: Failed to connect to runtime at http://127.0.0.1:8090
+```
+
+Ensure runtime is running:
+
+```bash
+spice run &
+spice models
+```
+
+### No Models Loaded
+
+```
+(no models)
+```
+
+Check `spicepod.yaml` for model definitions:
+
+```yaml
+models:
+  - from: huggingface:huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+```
+
+Restart runtime:
+
+```bash
+spice run
+```
+
+### Model Loading Error
+
+Check runtime logs for details:
+
+```bash
+spice run -v
+```
+
+Common issues:
+
+- Missing API key for cloud providers (OpenAI, Cohere)
+- Invalid model path for local models
+- Network connectivity for remote models
+- Insufficient memory for large models
+
+## Related Commands
+
+- [`spice run`](/cli/run) - Start runtime with models
+- [`spice search`](/cli/search) - Search using embedding models
+- [`spice sql`](/cli/sql) - Query data
+
+## Model Types
+
+Spice supports:
+
+- **Embedding models** - Generate vector embeddings for semantic search
+- **LLMs** - Language models for text generation and chat
+- **Classification models** - Classify text or data
+- **Custom ONNX models** - Bring your own models
+
+See [Model Components](https://spiceai.org/docs/components/models) for full documentation.
+
+## Performance
+
+Model loading times vary:
+
+- **Small models** (< 100MB): 1-5 seconds
+- **Medium models** (100MB - 1GB): 5-30 seconds
+- **Large models** (> 1GB): 30+ seconds
+
+Cloud API models (OpenAI, Cohere) don't require local loading and are marked `ready` immediately.

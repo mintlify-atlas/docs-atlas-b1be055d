@@ -1,0 +1,352 @@
+---
+title: 'Full-Text Search'
+description: 'BM25 text search with Tantivy using the text_search() UDTF'
+---
+
+Full-text search uses BM25 ranking with the Tantivy search engine to find documents by keyword relevance.
+
+## text_search() UDTF
+
+The `text_search()` User-Defined Table Function performs full-text search:
+
+```sql
+text_search(
+  table_name,
+  query,
+  [column_name],
+  [limit],
+  [include_score]
+)
+```
+
+### Parameters
+
+- `table_name` (required) - Name of the table with indexed text
+- `query` (required) - Search query string
+- `column_name` (optional) - Specific column to search
+- `limit` (optional) - Maximum results to return (default: 1000)
+- `include_score` (optional) - Include `_score` column (default: true)
+
+### Basic Usage
+
+```sql
+-- Simple text search
+SELECT * FROM text_search(documents, 'database query');
+
+-- Limit results
+SELECT id, title, _score
+FROM text_search(articles, 'machine learning', limit => 10);
+
+-- Search specific column
+SELECT question, answer, _score
+FROM text_search(faqs, 'password reset', question, 5);
+```
+
+## BM25 Ranking
+
+BM25 (Best Matching 25) is a probabilistic ranking function that scores documents based on:
+
+1. **Term Frequency (TF)** - How often query terms appear in the document
+2. **Inverse Document Frequency (IDF)** - Rarity of terms across all documents
+3. **Document Length** - Normalized by average document length
+
+**Score interpretation**: Higher scores = better matches. Scores are not normalized to [0,1].
+
+### Query Syntax
+
+Text search supports simple, space-delimited queries:
+
+```sql
+-- Multiple terms (OR by default)
+SELECT * FROM text_search(docs, 'rust programming');
+-- Matches documents containing "rust" OR "programming"
+
+-- Phrase matching
+SELECT * FROM text_search(docs, 'machine learning');
+-- Matches documents with "machine" OR "learning"
+
+-- Special characters are tokenized
+SELECT * FROM text_search(docs, 'C++ developer');
+-- Searches for "c", "developer"
+```
+
+**Note**: The query is tokenized and lowercased. Complex boolean operators (AND, OR, NOT) are treated as regular terms.
+
+## Configuration
+
+Enable full-text search in your spicepod.yaml:
+
+```yaml
+datasets:
+  - name: articles
+    from: postgres:articles
+    acceleration:
+      enabled: true
+    search:
+      full_text:
+        enabled: true
+        columns:
+          - title
+          - content
+```
+
+### Multi-Column Indexing
+
+Index multiple columns for comprehensive search:
+
+```yaml
+datasets:
+  - name: support_tickets
+    search:
+      full_text:
+        enabled: true
+        columns:
+          - subject
+          - description
+          - resolution_notes
+```
+
+Search specific indexed columns:
+
+```sql
+-- Search in subject field
+SELECT * FROM text_search(support_tickets, 'billing issue', subject);
+
+-- Search in description
+SELECT * FROM text_search(support_tickets, 'payment failed', description);
+```
+
+## Integration with SQL
+
+### Filtering Results
+
+```sql
+SELECT 
+  id,
+  title,
+  category,
+  _score
+FROM text_search(articles, 'kubernetes deployment')
+WHERE category = 'DevOps'
+  AND publish_date > '2024-01-01'
+  AND _score > 10.0
+ORDER BY _score DESC;
+```
+
+### Joining with Tables
+
+```sql
+SELECT 
+  t.question_id,
+  t.title,
+  t._score,
+  u.username,
+  u.reputation
+FROM text_search(questions, 'gitignore untracked') t
+JOIN users u ON t.user_id = u.id
+WHERE t._score > 5.0
+ORDER BY t._score DESC
+LIMIT 10;
+```
+
+### Aggregations
+
+```sql
+SELECT 
+  category,
+  COUNT(*) as match_count,
+  AVG(_score) as avg_score
+FROM text_search(documents, 'artificial intelligence')
+GROUP BY category
+ORDER BY avg_score DESC;
+```
+
+## Tantivy Indexing
+
+Spice uses Tantivy, a full-text search library written in Rust, providing:
+
+- Fast indexing and searching
+- Low memory footprint
+- BM25 ranking algorithm
+- Simple tokenization and lowercasing
+
+### Index Storage
+
+Full-text indexes are stored alongside accelerated data:
+
+```yaml
+datasets:
+  - name: documents
+    acceleration:
+      enabled: true
+      engine: duckdb  # or arrow, sqlite, postgres
+    search:
+      full_text:
+        enabled: true
+        columns: [content]
+```
+
+The Tantivy index is created and maintained automatically as data is loaded and updated.
+
+## Performance
+
+### Index Creation
+
+Indexes are built during dataset acceleration:
+
+```bash
+# Monitor index creation
+2024-01-20T10:30:15.123Z  INFO Loading data for dataset documents
+2024-01-20T10:30:20.456Z  INFO Creating full-text index for column: content
+2024-01-20T10:30:25.789Z  INFO Loaded 100,000 rows for dataset documents
+```
+
+### Query Performance
+
+Full-text search is optimized for:
+
+- **Small to medium datasets** (< 10M documents)
+- **Keyword-based queries** (not semantic search)
+- **Fast exact matching** (microseconds for indexed terms)
+
+For large datasets or semantic search, consider [Vector Search](/search/vector-search).
+
+### Optimization Tips
+
+1. **Limit results**: Use the `limit` parameter in the UDTF
+2. **Pre-filter**: Apply WHERE clauses to reduce result set
+3. **Accelerate data**: Enable acceleration for the dataset
+4. **Selective columns**: Only index columns you need to search
+
+## Special Columns
+
+### _score
+
+BM25 relevance score (higher = more relevant):
+
+```sql
+SELECT title, _score
+FROM text_search(docs, 'rust programming')
+WHERE _score > 8.0;
+```
+
+### _value
+
+The matched content from the search column:
+
+```sql
+SELECT id, _value as matched_text, _score
+FROM text_search(articles, 'database')
+LIMIT 5;
+```
+
+## Examples
+
+### Document Search
+
+```sql
+-- Find technical documentation
+SELECT 
+  doc_id,
+  title,
+  section,
+  _score
+FROM text_search(documentation, 'authentication oauth token')
+WHERE section IN ('API', 'Security')
+ORDER BY _score DESC
+LIMIT 20;
+```
+
+### Log Analysis
+
+```sql
+-- Search error logs
+SELECT 
+  timestamp,
+  service_name,
+  _value as log_message,
+  _score
+FROM text_search(logs, 'connection timeout error')
+WHERE timestamp > NOW() - INTERVAL '1 hour'
+ORDER BY _score DESC, timestamp DESC
+LIMIT 50;
+```
+
+### E-commerce Product Search
+
+```sql
+-- Find products by description
+SELECT 
+  product_id,
+  name,
+  description,
+  price,
+  _score
+FROM text_search(products, 'wireless bluetooth headphones', description)
+WHERE price < 100.00
+  AND in_stock = true
+ORDER BY _score DESC
+LIMIT 10;
+```
+
+### FAQ Search
+
+```sql
+-- Search support articles
+SELECT 
+  article_id,
+  question,
+  answer,
+  category,
+  _score
+FROM text_search(faqs, 'forgot password reset', question, 10)
+ORDER BY _score DESC;
+```
+
+## Limitations
+
+- **No boolean operators**: AND, OR, NOT are treated as regular terms
+- **No phrase search**: Multi-word queries are tokenized into OR terms
+- **No wildcards**: Pattern matching not supported
+- **No filters in UDTF**: Use SQL WHERE clauses instead
+- **Single-column queries**: Search one column per query
+
+## Comparison: Text Search vs Vector Search
+
+| Feature | Full-Text Search (BM25) | Vector Search |
+|---------|------------------------|---------------|
+| **Best for** | Exact keyword matching | Semantic similarity |
+| **Query type** | Keywords, terms | Natural language |
+| **Speed** | Very fast | Fast (depends on index) |
+| **Setup** | Automatic indexing | Requires embeddings |
+| **Storage** | Tantivy index | Vector store |
+| **Scoring** | BM25 (TF-IDF based) | Distance metrics |
+| **Relevance** | Keyword frequency | Semantic meaning |
+
+**Recommendation**: Use [Hybrid Search](/search/hybrid-search) to combine both methods for optimal results.
+
+## Troubleshooting
+
+### No results found
+
+- Verify column is indexed: Check `search.full_text.columns` in spicepod.yaml
+- Check query terms: Try individual words
+- Verify data is loaded: `SELECT COUNT(*) FROM table`
+
+### Unexpected results
+
+- Remember queries are tokenized and lowercased
+- Special characters are removed during tokenization
+- BM25 scores are not normalized
+
+### Index not created
+
+- Ensure `acceleration.enabled: true`
+- Check logs for indexing errors
+- Verify column data types (text/string columns only)
+
+## See Also
+
+- [Vector Search](/search/vector-search) - Semantic search with embeddings
+- [Hybrid Search](/search/hybrid-search) - Combine text and vector search
+- [Keyword Search](/search/keyword-search) - Simple pattern matching

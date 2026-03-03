@@ -1,0 +1,489 @@
+---
+title: 'JDBC Connectivity'
+description: 'Connect Java applications to Spice.ai using JDBC'
+---
+
+Spice.ai supports JDBC (Java Database Connectivity) for connecting Java applications and BI tools to query your data using standard SQL.
+
+## Overview
+
+JDBC enables:
+
+- **Java applications** to query Spice datasets
+- **JVM languages** (Kotlin, Scala, Groovy) connectivity
+- **BI tools** (Tableau, Power BI) with JDBC support
+- **Database clients** (DBeaver, DataGrip, SQL Workbench)
+
+## Prerequisites
+
+### Arrow Flight SQL JDBC Driver
+
+Spice uses Arrow Flight SQL protocol. You need the Apache Arrow Flight SQL JDBC driver.
+
+#### Maven
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>flight-sql-jdbc-driver</artifactId>
+        <version>18.0.0</version>
+    </dependency>
+</dependencies>
+```
+
+#### Gradle
+
+```groovy
+dependencies {
+    implementation 'org.apache.arrow:flight-sql-jdbc-driver:18.0.0'
+}
+```
+
+#### SBT (Scala)
+
+```scala
+libraryDependencies += "org.apache.arrow" % "flight-sql-jdbc-driver" % "18.0.0"
+```
+
+## Connection
+
+### JDBC URL Format
+
+```
+jdbc:arrow-flight-sql://localhost:50051
+```
+
+### With Parameters
+
+```
+jdbc:arrow-flight-sql://localhost:50051?useEncryption=false&user=username&password=password
+```
+
+### Default Ports
+
+| Service | Port | Description |
+|---------|------|-------------|
+| HTTP API | 8090 | SQL queries, health checks |
+| Arrow Flight | 50051 | Flight and Flight SQL (ODBC/JDBC) |
+| Metrics | 9090 | Prometheus metrics |
+
+## Authentication
+
+### Username and Password
+
+```java
+String url = "jdbc:arrow-flight-sql://localhost:50051";
+Properties props = new Properties();
+props.setProperty("user", "your-username");
+props.setProperty("password", "your-password");
+props.setProperty("useEncryption", "false");
+
+Connection conn = DriverManager.getConnection(url, props);
+```
+
+### API Key (Bearer Token)
+
+```java
+String url = "jdbc:arrow-flight-sql://localhost:50051";
+Properties props = new Properties();
+props.setProperty("token", "your-api-key");
+props.setProperty("useEncryption", "false");
+
+Connection conn = DriverManager.getConnection(url, props);
+```
+
+### No Authentication
+
+```java
+String url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false";
+Connection conn = DriverManager.getConnection(url);
+```
+
+## Java Examples
+
+### Basic Query
+
+```java
+import java.sql.*;
+
+public class SpiceExample {
+    public static void main(String[] args) {
+        String url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT * FROM taxi_trips LIMIT 10")) {
+
+            // Process results
+            while (rs.next()) {
+                int passengerCount = rs.getInt("passenger_count");
+                double totalAmount = rs.getDouble("total_amount");
+                System.out.printf("Passengers: %d, Amount: %.2f%n",
+                    passengerCount, totalAmount);
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### Parameterized Queries
+
+Prevent SQL injection and improve performance:
+
+```java
+import java.sql.*;
+
+public class ParameterizedExample {
+    public static void main(String[] args) {
+        String url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false";
+        String sql = "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            // Set parameters
+            pstmt.setInt(1, 2);  // passenger_count = 2
+            pstmt.setInt(2, 10); // LIMIT 10
+
+            // Execute query
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    System.out.println(rs.getString("passenger_count"));
+                }
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### Batch Operations
+
+```java
+import java.sql.*;
+
+public class BatchExample {
+    public static void main(String[] args) throws SQLException {
+        String url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false";
+        String sql = "INSERT INTO my_table (id, name, value) VALUES (?, ?, ?)";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            // Add batch operations
+            for (int i = 0; i < 1000; i++) {
+                pstmt.setInt(1, i);
+                pstmt.setString(2, "Name" + i);
+                pstmt.setDouble(3, i * 1.5);
+                pstmt.addBatch();
+
+                // Execute every 100 records
+                if (i % 100 == 0) {
+                    pstmt.executeBatch();
+                }
+            }
+
+            // Execute remaining
+            pstmt.executeBatch();
+            conn.commit();
+
+        }
+    }
+}
+```
+
+### Connection Pooling
+
+Use HikariCP for production applications:
+
+#### Maven Dependency
+
+```xml
+<dependency>
+    <groupId>com.zaxxer</groupId>
+    <artifactId>HikariCP</artifactId>
+    <version>5.1.0</version>
+</dependency>
+```
+
+#### Configuration
+
+```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
+public class PooledExample {
+    private static HikariDataSource dataSource;
+
+    static {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:arrow-flight-sql://localhost:50051");
+        config.addDataSourceProperty("useEncryption", "false");
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(5);
+        config.setConnectionTimeout(30000);
+
+        dataSource = new HikariDataSource(config);
+    }
+
+    public static void main(String[] args) throws Exception {
+        // Get connection from pool
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT * FROM taxi_trips LIMIT 10")) {
+
+            while (rs.next()) {
+                System.out.println(rs.getString(1));
+            }
+        }
+    }
+}
+```
+
+## Kotlin Example
+
+```kotlin
+import java.sql.DriverManager
+
+fun main() {
+    val url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false"
+    val sql = "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?"
+
+    DriverManager.getConnection(url).use { conn ->
+        conn.prepareStatement(sql).use { pstmt ->
+            pstmt.setInt(1, 2)
+            pstmt.setInt(2, 10)
+
+            pstmt.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val passengerCount = rs.getInt("passenger_count")
+                    val totalAmount = rs.getDouble("total_amount")
+                    println("Passengers: $passengerCount, Amount: $totalAmount")
+                }
+            }
+        }
+    }
+}
+```
+
+## Scala Example
+
+```scala
+import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
+
+object SpiceScalaExample {
+  def main(args: Array[String]): Unit = {
+    val url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false"
+    val sql = "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?"
+
+    var conn: Connection = null
+    var pstmt: PreparedStatement = null
+    var rs: ResultSet = null
+
+    try {
+      conn = DriverManager.getConnection(url)
+      pstmt = conn.prepareStatement(sql)
+      pstmt.setInt(1, 2)
+      pstmt.setInt(2, 10)
+
+      rs = pstmt.executeQuery()
+
+      while (rs.next()) {
+        val passengerCount = rs.getInt("passenger_count")
+        val totalAmount = rs.getDouble("total_amount")
+        println(s"Passengers: $passengerCount, Amount: $totalAmount")
+      }
+    } finally {
+      if (rs != null) rs.close()
+      if (pstmt != null) pstmt.close()
+      if (conn != null) conn.close()
+    }
+  }
+}
+```
+
+## Spring Boot Integration
+
+### application.properties
+
+```properties
+spring.datasource.url=jdbc:arrow-flight-sql://localhost:50051
+spring.datasource.driver-class-name=org.apache.arrow.driver.jdbc.ArrowFlightJdbcDriver
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=5
+```
+
+### Configuration
+
+```java
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import javax.sql.DataSource;
+
+@Configuration
+public class DataSourceConfig {
+
+    @Bean
+    public DataSource dataSource() {
+        return DataSourceBuilder.create()
+            .url("jdbc:arrow-flight-sql://localhost:50051")
+            .driverClassName("org.apache.arrow.driver.jdbc.ArrowFlightJdbcDriver")
+            .build();
+    }
+}
+```
+
+### Repository
+
+```java
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class TaxiTripRepository {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public TaxiTripRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public List<Map<String, Object>> findByPassengerCount(int count, int limit) {
+        String sql = "SELECT * FROM taxi_trips WHERE passenger_count = ? LIMIT ?";
+        return jdbcTemplate.queryForList(sql, count, limit);
+    }
+}
+```
+
+## Business Intelligence Tools
+
+### Tableau
+
+1. Open Tableau Desktop
+2. Click **Connect** → **Other Databases (JDBC)**
+3. Set URL: `jdbc:arrow-flight-sql://localhost:50051`
+4. Set Dialect: **PostgreSQL** (or Generic)
+5. Configure authentication
+6. Click **Sign In**
+
+### DBeaver
+
+1. Create new connection
+2. Select **Arrow Flight SQL** or **Generic JDBC**
+3. Configure:
+   - **URL**: `jdbc:arrow-flight-sql://localhost:50051`
+   - **Driver**: Arrow Flight SQL JDBC Driver
+   - **User/Password**: (if required)
+4. Test connection
+5. Execute queries
+
+### DataGrip
+
+1. Add new Data Source
+2. Select **Apache Arrow Flight SQL**
+3. Configure connection URL and credentials
+4. Test connection
+5. Query your data
+
+## Troubleshooting
+
+### Driver Not Found
+
+**Error**: `No suitable driver found for jdbc:arrow-flight-sql`
+
+**Solution**: Ensure the JDBC driver is in your classpath:
+
+```xml
+<dependency>
+    <groupId>org.apache.arrow</groupId>
+    <artifactId>flight-sql-jdbc-driver</artifactId>
+    <version>18.0.0</version>
+</dependency>
+```
+
+### Connection Refused
+
+**Error**: `Connection refused to localhost:50051`
+
+**Solution**:
+- Verify Spice is running
+- Check Flight port (default: 50051)
+- Verify firewall settings
+
+### Authentication Failed
+
+**Error**: `Authentication failed`
+
+**Solution**:
+- Verify username/password or API key
+- Check authentication configuration in Spice runtime
+- Ensure credentials are passed correctly in connection properties
+
+### SSL/TLS Errors
+
+**Error**: `SSL connection failed`
+
+**Solution**:
+- For local development: `useEncryption=false`
+- For production: Configure TLS in Spice runtime
+- Add `trustServerCertificate=true` for self-signed certificates (development only)
+
+## Performance Best Practices
+
+1. **Use connection pooling** (HikariCP recommended)
+2. **Use prepared statements** for repeated queries
+3. **Batch operations** when inserting multiple rows
+4. **Set appropriate fetch size** for large result sets:
+   ```java
+   stmt.setFetchSize(1000);
+   ```
+5. **Close resources** in finally blocks or use try-with-resources
+6. **Reuse PreparedStatement** objects when possible
+
+## Testing Connection
+
+```java
+import java.sql.*;
+
+public class TestConnection {
+    public static void main(String[] args) {
+        String url = "jdbc:arrow-flight-sql://localhost:50051?useEncryption=false";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT 1 AS test")) {
+
+            if (rs.next()) {
+                System.out.println("✓ Connection successful!");
+                System.out.println("✓ Query result: " + rs.getInt("test"));
+            }
+
+        } catch (SQLException e) {
+            System.err.println("✗ Connection failed: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+}
+```
+
+## Related APIs
+
+- [Arrow Flight SQL API](/api/arrow-flight-sql) - Native Flight SQL protocol
+- [ODBC Connectivity](/api/odbc) - Open Database Connectivity
+- [ADBC](/api/adbc) - Arrow Database Connectivity
+- [SQL Query API](/api/sql) - HTTP-based SQL queries

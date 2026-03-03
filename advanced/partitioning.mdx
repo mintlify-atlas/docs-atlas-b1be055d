@@ -1,0 +1,530 @@
+---
+title: 'Data Partitioning'
+description: 'Partitioning strategies for large datasets in Spice.ai'
+---
+
+## Overview
+
+Data partitioning divides large datasets into smaller, manageable pieces called partitions. Partitioning improves query performance by:
+
+- Reducing data scanned (partition pruning)
+- Enabling parallel processing
+- Improving cache locality
+- Reducing memory usage
+
+## Partitioning Strategies
+
+### Time-Based Partitioning
+
+Most common for time-series data:
+
+```yaml
+datasets:
+  - name: events
+    from: s3://bucket/events/
+    params:
+      # Hive-style partitioning: year=2024/month=01/day=15/
+      hive_partitioning_enabled: 'true'
+```
+
+**Query with partition pruning:**
+
+```sql
+-- Only scans January 2024 partitions
+SELECT * FROM events 
+WHERE year = 2024 
+  AND month = 1 
+  AND event_type = 'click';
+```
+
+### Range Partitioning
+
+Partition by value ranges:
+
+```yaml
+datasets:
+  - name: orders
+    from: postgres:orders
+    acceleration:
+      enabled: true
+      engine: duckdb
+```
+
+```sql
+-- Partition by order amount ranges
+CREATE TABLE orders_partitioned AS
+SELECT *,
+  CASE 
+    WHEN amount < 100 THEN 'small'
+    WHEN amount < 1000 THEN 'medium'
+    ELSE 'large'
+  END as size_partition
+FROM orders;
+```
+
+### Hash Partitioning
+
+Distribute data evenly using hash function:
+
+```yaml
+datasets:
+  - name: users
+    from: postgres:users
+    acceleration:
+      enabled: true
+      engine: duckdb
+```
+
+```sql
+-- Distribute users across partitions by hash
+SELECT *, 
+  user_id % 16 as partition_id  -- 16 partitions
+FROM users;
+```
+
+### List Partitioning
+
+Partition by discrete values:
+
+```yaml
+datasets:
+  - name: sales
+    from: postgres:sales
+```
+
+```sql
+-- Partition by region
+SELECT * FROM sales WHERE region IN ('US', 'CA', 'MX');  -- North America partition
+SELECT * FROM sales WHERE region IN ('UK', 'DE', 'FR');  -- Europe partition
+```
+
+## Partition Configuration
+
+### S3 and File Partitioning
+
+**Hive Partitioning:**
+
+```yaml
+datasets:
+  - name: logs
+    from: s3://bucket/logs/
+    params:
+      hive_partitioning_enabled: 'true'
+      # Expects structure: year=2024/month=01/day=15/
+```
+
+**Directory-Based Partitioning:**
+
+```yaml
+datasets:
+  - name: events
+    from: s3://bucket/events/
+    params:
+      # Path: 2024/01/15/events.parquet
+      partition_columns:
+        - year
+        - month  
+        - day
+```
+
+### DuckDB Partitioned Tables
+
+Use DuckDB's native partitioning:
+
+```yaml
+datasets:
+  - name: metrics
+    from: postgres:metrics
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+```
+
+```sql
+-- DuckDB automatically partitions large tables
+SELECT * FROM metrics WHERE timestamp >= '2024-01-01';
+```
+
+### Cayenne (Vortex) Partitioning
+
+Cayenne automatically partitions data into multiple files:
+
+```yaml
+datasets:
+  - name: large_dataset
+    from: s3://bucket/data/
+    acceleration:
+      enabled: true
+      engine: cayenne  # Multi-file columnar format
+```
+
+**Partition layout:**
+
+```
+.spice/data/large_dataset/
+├── partition_0.vortex
+├── partition_1.vortex
+├── partition_2.vortex
+└── metadata.db (SQLite)
+```
+
+## Partition Pruning
+
+Partition pruning skips irrelevant partitions:
+
+### Time-Based Pruning
+
+```sql
+-- Only scans partitions for Q1 2024
+SELECT COUNT(*) FROM events
+WHERE timestamp BETWEEN '2024-01-01' AND '2024-03-31';
+```
+
+### Multi-Column Pruning
+
+```sql
+-- Prunes by year, month, and region
+SELECT * FROM sales
+WHERE year = 2024 
+  AND month IN (1, 2, 3)
+  AND region = 'US';
+```
+
+### Dynamic Partition Pruning
+
+Prune based on join results:
+
+```sql
+-- Partitions pruned based on active_regions
+SELECT s.* 
+FROM sales s
+JOIN active_regions r ON s.region = r.region
+WHERE s.year = 2024;
+```
+
+## Refresh Data Window with Partitioning
+
+Limit refreshes to specific time ranges:
+
+```yaml
+datasets:
+  - name: events
+    from: postgres:events
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_mode: append
+      refresh_check_interval: 10m
+      time_column: created_at
+      time_format: timestamptz
+      refresh_data_window: 7d  # Only refresh last 7 days
+```
+
+**How it works:**
+
+```sql
+-- Runtime automatically adds filter
+SELECT * FROM events 
+WHERE created_at >= NOW() - INTERVAL '7 days';
+```
+
+## Partition Management
+
+### Partition Statistics
+
+```sql
+-- View partition information
+SELECT 
+  partition_id,
+  row_count,
+  size_bytes,
+  min_timestamp,
+  max_timestamp
+FROM dataset_partitions
+WHERE dataset_name = 'events';
+```
+
+### Manual Partition Refresh
+
+```yaml
+datasets:
+  - name: logs
+    from: s3://bucket/logs/
+    acceleration:
+      enabled: true
+      refresh_mode: full
+      refresh_sql: |
+        SELECT * FROM logs 
+        WHERE year = 2024 AND month = 1  -- Specific partition
+```
+
+## Parallel Query Execution
+
+### Target Partitions
+
+Configure parallelism:
+
+```yaml
+runtime:
+  query:
+    target_partitions: 16  # Number of parallel partitions
+```
+
+**Rule of thumb:**
+
+```
+target_partitions = CPU cores × (2 to 4)
+```
+
+### Partition Size Guidelines
+
+| Dataset Size | Partition Count | Partition Size |
+|--------------|----------------|----------------|
+| < 1GB | 4-8 | 128-256MB |
+| 1-10GB | 8-16 | 128-512MB |
+| 10-100GB | 16-32 | 512MB-2GB |
+| 100GB+ | 32-64 | 1-4GB |
+
+## Advanced Partitioning
+
+### Multi-Level Partitioning
+
+```yaml
+datasets:
+  - name: events
+    from: s3://bucket/events/
+    params:
+      # year=2024/month=01/day=15/hour=10/
+      hive_partitioning_enabled: 'true'
+```
+
+```sql
+-- Prunes by year, month, day, and hour
+SELECT * FROM events
+WHERE year = 2024 
+  AND month = 1 
+  AND day = 15 
+  AND hour BETWEEN 10 AND 12;
+```
+
+### Composite Partitioning
+
+Combine partitioning strategies:
+
+```yaml
+datasets:
+  - name: transactions
+    from: postgres:transactions
+    acceleration:
+      enabled: true
+      engine: duckdb
+```
+
+```sql
+-- Partition by date and region
+CREATE TABLE transactions_partitioned AS
+SELECT *,
+  DATE_TRUNC('day', created_at) as date_partition,
+  region as region_partition
+FROM transactions;
+```
+
+### Partition Expressions
+
+Define partitions using SQL expressions:
+
+```yaml
+datasets:
+  - name: events
+    from: postgres:events
+    vector:
+      enabled: true
+      partition_by:
+        - name: year
+          expression: YEAR(created_at)
+        - name: month
+          expression: MONTH(created_at)
+```
+
+## Partition Optimization
+
+### 1. Choose Appropriate Partition Column
+
+**Good partition columns:**
+
+- Frequently filtered in queries
+- Low cardinality (date, region, category)
+- Evenly distributed data
+
+**Poor partition columns:**
+
+- High cardinality (user_id, transaction_id)
+- Rarely used in filters
+- Skewed distribution
+
+### 2. Avoid Over-Partitioning
+
+```yaml
+# BAD - Too many small partitions
+datasets:
+  - name: events
+    from: s3://bucket/events/
+    params:
+      # year/month/day/hour/minute - Too granular!
+      hive_partitioning_enabled: 'true'
+
+# GOOD - Balanced partitions
+datasets:
+  - name: events
+    from: s3://bucket/events/
+    params:
+      # year/month/day - Reasonable granularity
+      hive_partitioning_enabled: 'true'
+```
+
+### 3. Align Partitions with Query Patterns
+
+```sql
+-- If queries filter by region and date
+SELECT * FROM sales 
+WHERE region = 'US' 
+  AND sale_date >= '2024-01-01';
+
+-- Partition by both region and date
+partition_by:
+  - region
+  - year
+  - month
+```
+
+### 4. Monitor Partition Skew
+
+```sql
+-- Check partition size distribution
+SELECT 
+  partition_id,
+  row_count,
+  size_bytes,
+  size_bytes::FLOAT / SUM(size_bytes) OVER () AS pct_of_total
+FROM dataset_partitions
+WHERE dataset_name = 'events'
+ORDER BY size_bytes DESC;
+```
+
+Ideal: All partitions within 2-3x of mean size.
+
+## Partitioning by Engine
+
+### Arrow
+
+- In-memory, single partition by default
+- Use `target_partitions` for parallel execution
+- No persistent partitioning
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      engine: arrow  # In-memory, parallel execution
+```
+
+### DuckDB
+
+- File-based partitioning for large datasets
+- Automatic partition management
+- Supports partition pruning
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      engine: duckdb
+      mode: file  # Enables partitioning
+```
+
+### Cayenne (Vortex)
+
+- Multi-file columnar storage
+- Automatic partitioning across files
+- Optimized for large datasets
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      engine: cayenne  # Multi-file partitioning
+```
+
+### SQLite
+
+- Single-file database
+- No native partitioning support
+- Use separate databases for partitioning
+
+```yaml
+datasets:
+  - name: events_2024
+    acceleration:
+      engine: sqlite
+      # Manual partitioning via separate datasets
+```
+
+### PostgreSQL
+
+- Native table partitioning
+- Declarative partitioning syntax
+- Supports all partition types
+
+```yaml
+datasets:
+  - name: events
+    from: postgres:events  # PostgreSQL handles partitioning
+    acceleration:
+      engine: postgres
+```
+
+## Best Practices
+
+### 1. Start with Time-Based Partitioning
+
+For time-series data, always partition by time:
+
+```yaml
+datasets:
+  - name: metrics
+    from: s3://bucket/metrics/
+    params:
+      hive_partitioning_enabled: 'true'
+      # year=2024/month=01/day=15/
+```
+
+### 2. Use Partition Pruning in Queries
+
+```sql
+-- GOOD - Enables partition pruning
+SELECT * FROM events 
+WHERE year = 2024 AND month = 1;
+
+-- BAD - Cannot prune partitions
+SELECT * FROM events 
+WHERE DATE_TRUNC('month', timestamp) = '2024-01-01';
+```
+
+### 3. Keep Partition Size Reasonable
+
+Target 256MB - 2GB per partition for optimal performance.
+
+### 4. Monitor Query Performance
+
+```sql
+EXPLAIN SELECT * FROM events WHERE year = 2024 AND month = 1;
+```
+
+Verify partition pruning is active in the query plan.
+
+## Related Topics
+
+- [Query Optimization](/advanced/query-optimization) - Query performance tuning
+- [Snapshots](/advanced/snapshots) - Fast bootstrapping with snapshots
+- [Caching](/advanced/caching) - Results caching

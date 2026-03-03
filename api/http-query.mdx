@@ -1,0 +1,299 @@
+---
+title: 'HTTP Query API'
+description: 'Execute SQL queries via HTTP endpoint'
+---
+
+## Overview
+
+The HTTP Query API allows you to execute SQL queries directly from HTTP requests. The endpoint accepts SQL queries as plain text or JSON with parameters and returns results in multiple formats.
+
+## Endpoint
+
+```
+POST /v1/sql
+```
+
+## Request Headers
+
+<ParamField header="Content-Type" type="string" default="text/plain">
+  The format of the request body:
+  - `text/plain` - SQL query as plain text
+  - `application/json` - JSON object with SQL and optional parameters
+</ParamField>
+
+<ParamField header="Accept" type="string" default="application/json">
+  The desired response format:
+  - `application/json` - JSON array of row objects (default)
+  - `application/vnd.spiceai.sql.v1+json` - JSON with schema and data
+  - `text/csv` - CSV format
+  - `text/plain` - ASCII table format
+</ParamField>
+
+## Request Body
+
+### Plain Text Query
+
+Send the SQL query as plain text in the request body:
+
+```sql
+SELECT avg(total_amount), avg(tip_amount), count(1), passenger_count 
+FROM my_table 
+GROUP BY passenger_count 
+ORDER BY passenger_count ASC 
+LIMIT 3
+```
+
+### JSON with Positional Parameters
+
+<ParamField body="sql" type="string" required>
+  The SQL query to execute. Use `$1`, `$2`, etc. for positional parameters.
+</ParamField>
+
+<ParamField body="parameters" type="array">
+  Array of parameter values that replace `$1`, `$2`, etc. in the SQL query.
+</ParamField>
+
+```json
+{
+  "sql": "SELECT avg(total_amount), avg(tip_amount), count($1), passenger_count FROM my_table GROUP BY passenger_count ORDER BY passenger_count ASC LIMIT $2",
+  "parameters": [1, 3]
+}
+```
+
+### JSON with Named Parameters
+
+<ParamField body="sql" type="string" required>
+  The SQL query to execute. Use `:name` for named parameters.
+</ParamField>
+
+<ParamField body="parameters" type="object">
+  Object mapping parameter names to values.
+</ParamField>
+
+```json
+{
+  "sql": "SELECT :foo + 1 AS the_answer",
+  "parameters": {"foo": 41}
+}
+```
+
+## Response Formats
+
+### JSON Array (default)
+
+<ResponseField name="(array)" type="array<object>">
+  Array of row objects where each key is a column name.
+</ResponseField>
+
+```json
+[
+  {
+    "AVG(my_table.tip_amount)": 3.072259971396793,
+    "AVG(my_table.total_amount)": 25.327816939456525,
+    "COUNT(Int64(1))": 31465,
+    "passenger_count": 0
+  },
+  {
+    "AVG(my_table.tip_amount)": 3.3712622884680057,
+    "AVG(my_table.total_amount)": 26.205230445474996,
+    "COUNT(Int64(1))": 2188739,
+    "passenger_count": 1
+  },
+  {
+    "AVG(my_table.tip_amount)": 3.7171302113290854,
+    "AVG(my_table.total_amount)": 29.520659930930304,
+    "COUNT(Int64(1))": 405103,
+    "passenger_count": 2
+  }
+]
+```
+
+### Spice.ai Extended JSON Format
+
+Request with `Accept: application/vnd.spiceai.sql.v1+json`:
+
+<ResponseField name="row_count" type="integer">
+  Total number of rows returned.
+</ResponseField>
+
+<ResponseField name="schema" type="object">
+  Schema information for the result set.
+
+  <ResponseField name="fields" type="array">
+    Array of field definitions.
+
+    <ResponseField name="name" type="string">
+      Column name.
+    </ResponseField>
+
+    <ResponseField name="data_type" type="string">
+      Arrow data type (e.g., `Float64`, `Int64`, `Utf8`).
+    </ResponseField>
+
+    <ResponseField name="nullable" type="boolean">
+      Whether the column can contain NULL values.
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="data" type="array<object>">
+  Array of row objects.
+</ResponseField>
+
+```json
+{
+  "row_count": 3,
+  "schema": {
+    "fields": [
+      {
+        "name": "AVG(my_table.tip_amount)",
+        "data_type": "Float64",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      },
+      {
+        "name": "AVG(my_table.total_amount)",
+        "data_type": "Float64",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      },
+      {
+        "name": "COUNT(Int64(1))",
+        "data_type": "Int64",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      },
+      {
+        "name": "passenger_count",
+        "data_type": "Int64",
+        "nullable": false,
+        "dict_id": 0,
+        "dict_is_ordered": false
+      }
+    ]
+  },
+  "data": [
+    {
+      "AVG(my_table.tip_amount)": 3.072259971396793,
+      "AVG(my_table.total_amount)": 25.327816939456525,
+      "COUNT(Int64(1))": 31465,
+      "passenger_count": 0
+    },
+    {
+      "AVG(my_table.tip_amount)": 3.3712622884680057,
+      "AVG(my_table.total_amount)": 26.205230445474996,
+      "COUNT(Int64(1))": 2188739,
+      "passenger_count": 1
+    },
+    {
+      "AVG(my_table.tip_amount)": 3.7171302113290854,
+      "AVG(my_table.total_amount)": 29.520659930930304,
+      "COUNT(Int64(1))": 405103,
+      "passenger_count": 2
+    }
+  ]
+}
+```
+
+### CSV Format
+
+Request with `Accept: text/csv`:
+
+```csv
+"AVG(my_table.tip_amount)","AVG(my_table.total_amount)","COUNT(Int64(1))","passenger_count"
+3.072259971396793,25.327816939456525,31465,0
+3.3712622884680057,26.205230445474996,2188739,1
+3.7171302113290854,29.520659930930304,405103,2
+```
+
+### Plain Text Table
+
+Request with `Accept: text/plain`:
+
+```
++----------------------------+----------------------------+----------------+---------------------+
+| "AVG(my_table.tip_amount)"  | "AVG(my_table.total_amount)" | "COUNT(Int64(1))" | "passenger_count"   |
++----------------------------+----------------------------+----------------+---------------------+
+| 3.072259971396793           | 25.327816939456525         | 31465          | 0                   |
++----------------------------+----------------------------+----------------+---------------------+
+| 3.3712622884680057          | 26.205230445474996         | 2188739        | 1                   |
++----------------------------+----------------------------+----------------+---------------------+
+| 3.7171302113290854          | 29.520659930930304         | 405103         | 2                   |
++----------------------------+----------------------------+----------------+---------------------+
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+Returned when the SQL query is invalid or the request body is malformed.
+
+```
+Invalid JSON: missing field `sql`
+```
+
+```
+Error reading query: invalid UTF-8 sequence
+```
+
+### 500 Internal Server Error
+
+Returned when an unexpected error occurs during query execution.
+
+```
+Unexpected internal server error occurred
+```
+
+## Examples
+
+### Simple Query (Plain Text)
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: text/plain" \
+  -d "SELECT * FROM my_table LIMIT 10"
+```
+
+### Query with Positional Parameters
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "sql": "SELECT * FROM my_table WHERE id = $1 AND status = $2",
+    "parameters": [123, "active"]
+  }'
+```
+
+### Query with Named Parameters
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT * FROM users WHERE age > :min_age AND country = :country",
+    "parameters": {"min_age": 18, "country": "US"}
+  }'
+```
+
+### Get Results as CSV
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: text/plain" \
+  -H "Accept: text/csv" \
+  -d "SELECT * FROM sales_data LIMIT 100"
+```
+
+### Get Extended Format with Schema
+
+```bash
+curl -X POST http://localhost:8090/v1/sql \
+  -H "Content-Type: text/plain" \
+  -H "Accept: application/vnd.spiceai.sql.v1+json" \
+  -d "SELECT name, age, email FROM users"
+```

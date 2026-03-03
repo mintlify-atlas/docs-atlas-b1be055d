@@ -1,0 +1,641 @@
+---
+title: 'Embeddings'
+description: 'Generate text embeddings for semantic search and RAG'
+---
+
+Embeddings convert text into high-dimensional vectors that capture semantic meaning, enabling semantic search, similarity matching, and retrieval-augmented generation (RAG) workflows.
+
+## Overview
+
+Spice provides embeddings through:
+
+1. **OpenAI-Compatible API** - `POST /v1/embeddings` endpoint
+2. **Automatic Dataset Embedding** - Embed columns during data ingestion
+3. **Multiple Providers** - OpenAI, Bedrock, HuggingFace, Model2Vec, local models
+4. **Hardware Acceleration** - CUDA/Metal for local models
+5. **Caching** - Request and result caching for performance
+
+## Configuration
+
+Define embedding models in `spicepod.yaml`:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my-app
+
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding
+    params:
+      openai_api_key: ${secrets:openai_key}
+
+  - from: model2vec:minishlab/potion-base-8M
+    name: fast-embed
+```
+
+## Embedding API
+
+### Single Text
+
+```bash
+curl -X POST http://localhost:8090/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "text-embedding",
+    "input": "machine learning algorithms"
+  }'
+```
+
+Response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0234, -0.0145, 0.0678, ...]
+    }
+  ],
+  "model": "text-embedding",
+  "usage": {
+    "prompt_tokens": 4,
+    "total_tokens": 4
+  }
+}
+```
+
+### Batch Embeddings
+
+```bash
+curl -X POST http://localhost:8090/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "text-embedding",
+    "input": [
+      "First document about AI",
+      "Second document about ML",
+      "Third document about data"
+    ]
+  }'
+```
+
+### Python SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="not-needed"
+)
+
+response = client.embeddings.create(
+    model="text-embedding",
+    input="semantic search with vector databases"
+)
+
+embedding = response.data[0].embedding
+print(f"Dimensions: {len(embedding)}")
+```
+
+### Batch with Python
+
+```python
+texts = [
+    "Retrieval augmented generation",
+    "Vector similarity search",
+    "Semantic knowledge graphs"
+]
+
+response = client.embeddings.create(
+    model="text-embedding",
+    input=texts
+)
+
+for i, data in enumerate(response.data):
+    print(f"Text {i}: {len(data.embedding)} dimensions")
+```
+
+## Automatic Dataset Embedding
+
+Spice can automatically embed dataset columns during ingestion:
+
+```yaml
+datasets:
+  - from: postgres:documents
+    name: documents
+    acceleration:
+      enabled: true
+      engine: duckdb
+    columns:
+      - name: content
+        embeddings:
+          - from: text-embedding
+            row_id:
+              - id
+```
+
+This configuration:
+1. Embeds the `content` column using the `text-embedding` model
+2. Uses `id` as the row identifier
+3. Stores embeddings for vector search
+
+### Full-Text Search Integration
+
+Combine embeddings with full-text search:
+
+```yaml
+columns:
+  - name: description
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+    full_text_search:
+      enabled: true
+      row_ids:
+        - id
+```
+
+Now both vector and full-text search are available:
+
+```sql
+-- Vector search
+SELECT * FROM vector_search(documents, 'machine learning', 10);
+
+-- Full-text search
+SELECT * FROM text_search(documents, 'neural networks', 10);
+
+-- Hybrid search with RRF
+SELECT * FROM (
+  SELECT * FROM vector_search(documents, 'AI algorithms', rank_weight => 1.5)
+  UNION ALL
+  SELECT * FROM text_search(documents, 'deep learning', rank_weight => 1.2)
+) ORDER BY _score DESC LIMIT 10;
+```
+
+## Embedding Providers
+
+### OpenAI
+
+```yaml
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: openai-small
+    params:
+      openai_api_key: ${secrets:openai_key}
+      openai_usage_tier: tier3
+```
+
+**Available Models:**
+- `text-embedding-3-small` - 1536 dimensions, efficient
+- `text-embedding-3-large` - 3072 dimensions, highest quality
+- `text-embedding-ada-002` - Legacy model
+
+### AWS Bedrock
+
+#### Titan Embeddings
+
+```yaml
+embeddings:
+  - from: bedrock:amazon.titan-embed-text-v2:0
+    name: titan-embed
+    params:
+      aws_region: us-east-1
+      aws_access_key_id: ${secrets:aws_access_key}
+      aws_secret_access_key: ${secrets:aws_secret}
+      normalize: true
+      dimensions: 512
+```
+
+**Parameters:**
+- `normalize` - Normalize vectors (default: false)
+- `dimensions` - Output dimensions: 256, 512, or 1024
+
+#### Cohere Embeddings
+
+```yaml
+embeddings:
+  - from: bedrock:cohere.embed-english-v3
+    name: cohere-embed
+    params:
+      aws_region: us-east-1
+      aws_access_key_id: ${secrets:aws_access_key}
+      aws_secret_access_key: ${secrets:aws_secret}
+      truncate: END
+      input_type: SEARCH_DOCUMENT
+      embedding_type: FLOAT
+```
+
+**Parameters:**
+- `truncate` - NONE, START, END (default: NONE)
+- `input_type` - SEARCH_DOCUMENT, SEARCH_QUERY, CLASSIFICATION, CLUSTERING
+- `embedding_type` - FLOAT, INT8
+
+#### Nova Multimodal Embeddings
+
+```yaml
+embeddings:
+  - from: bedrock:amazon.nova-multimodal-embed-v2:0
+    name: nova-embed
+    params:
+      aws_region: us-east-1
+      aws_access_key_id: ${secrets:aws_access_key}
+      aws_secret_access_key: ${secrets:aws_secret}
+      dimensions: 1024
+      embedding_purpose: STORAGE
+      truncation_mode: NONE
+```
+
+**Parameters:**
+- `dimensions` - Output dimensions: 256, 384, 1024
+- `embedding_purpose` - STORAGE or QUERY
+- `truncation_mode` - NONE or TRUNCATE
+
+### Model2Vec (500x Faster)
+
+Model2Vec provides static embeddings that are significantly faster:
+
+```yaml
+embeddings:
+  - from: model2vec:minishlab/potion-base-8M
+    name: fast-embed
+    params:
+      normalize: true
+      parallelism: 4
+      embed_max_token_length: 512
+      embed_batch_size: 1024
+```
+
+**Available Models:**
+- `minishlab/potion-base-8M` - 256 dimensions, English
+- `minishlab/potion-multilingual-128M` - 256 dimensions, multilingual
+
+**Performance Comparison:**
+
+| Model Type | Embeddings/sec | Use Case |
+|------------|----------------|----------|
+| Transformer (GPU) | ~1,000 | High accuracy |
+| Transformer (CPU) | ~100 | General use |
+| Model2Vec | ~50,000 | High throughput |
+
+**When to Use Model2Vec:**
+- High-volume embedding pipelines
+- Real-time search applications
+- CPU-only deployments
+- Cost-sensitive workloads
+
+### HuggingFace
+
+```yaml
+embeddings:
+  - from: huggingface:sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+    params:
+      huggingface_token: ${secrets:hf_token}  # Optional
+```
+
+Models are automatically downloaded from HuggingFace Hub.
+
+**Popular Models:**
+- `sentence-transformers/all-MiniLM-L6-v2` - Fast, 384 dimensions
+- `sentence-transformers/all-mpnet-base-v2` - High quality, 768 dimensions
+- `BAAI/bge-small-en-v1.5` - Efficient, 384 dimensions
+
+### Local ONNX Models
+
+```yaml
+embeddings:
+  - from: file:models/all-MiniLM-L6-v2/
+    name: local-embed
+```
+
+Requires ONNX model files in the specified directory.
+
+### Google (Gemini)
+
+```yaml
+embeddings:
+  - from: google:text-embedding-004
+    name: gemini-embed
+    params:
+      google_api_key: ${secrets:google_key}
+```
+
+## Vector Storage
+
+Spice supports multiple vector storage backends:
+
+### Amazon S3 Vectors (Petabyte-Scale)
+
+```yaml
+datasets:
+  - from: postgres:documents
+    name: documents
+    acceleration:
+      enabled: true
+    columns:
+      - name: content
+        embeddings:
+          - from: text-embedding
+            row_id:
+              - id
+            vector_store: s3_vectors
+            vector_store_params:
+              bucket: my-vectors
+              region: us-east-1
+```
+
+S3 Vectors provides:
+- Petabyte-scale vector storage
+- Managed embedding lifecycle
+- Native SQL integration
+- Hybrid search with RRF
+
+### PostgreSQL (pgvector)
+
+```yaml
+columns:
+  - name: content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+        vector_store: pgvector
+        vector_store_params:
+          connection_string: ${secrets:postgres_url}
+```
+
+### DuckDB Vector
+
+```yaml
+columns:
+  - name: content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+        vector_store: duckdb_vector
+```
+
+### SQLite Vector
+
+```yaml
+columns:
+  - name: content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+        vector_store: sqlite_vec
+```
+
+## Distance Metrics
+
+Supported similarity metrics:
+
+- **Cosine Similarity** (default) - Best for normalized vectors
+- **Euclidean Distance** - L2 distance
+- **Dot Product** - Inner product similarity
+
+Configure in vector search:
+
+```sql
+SELECT * 
+FROM vector_search(
+    documents, 
+    'query text', 
+    10,
+    distance_metric => 'euclidean'
+);
+```
+
+## Chunking
+
+For large documents, configure chunking:
+
+```yaml
+columns:
+  - name: long_content
+    embeddings:
+      - from: text-embedding
+        row_id:
+          - id
+        chunking:
+          enabled: true
+          chunk_size: 512
+          chunk_overlap: 50
+          strategy: recursive  # or 'fixed'
+```
+
+**Chunking Strategies:**
+- `recursive` - Split on sentence boundaries
+- `fixed` - Fixed-size chunks
+
+## Caching
+
+Enable embedding caching for performance:
+
+```yaml
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: cached-embed
+    params:
+      openai_api_key: ${secrets:key}
+    caching:
+      enabled: true
+      max_size: 256MiB
+      ttl: 24h
+```
+
+Cache keys are based on:
+- Model name
+- Input text
+- Model parameters
+
+## Batch Processing
+
+Optimize batch embedding performance:
+
+```python
+from openai import OpenAI
+import time
+
+client = OpenAI(base_url="http://localhost:8090/v1")
+
+# Process in batches
+batch_size = 100
+texts = [...] # Large list of texts
+
+all_embeddings = []
+for i in range(0, len(texts), batch_size):
+    batch = texts[i:i+batch_size]
+    response = client.embeddings.create(
+        model="text-embedding",
+        input=batch
+    )
+    all_embeddings.extend([d.embedding for d in response.data])
+    time.sleep(0.1)  # Rate limiting
+```
+
+## Performance Optimization
+
+### Hardware Acceleration
+
+**Local Models with CUDA:**
+
+```yaml
+embeddings:
+  - from: file:models/all-MiniLM-L6-v2/
+    name: gpu-embed
+    params:
+      device: cuda  # Automatic GPU detection
+```
+
+**Apple Silicon with Metal:**
+
+```yaml
+embeddings:
+  - from: file:models/all-MiniLM-L6-v2/
+    name: metal-embed
+    params:
+      device: metal  # Automatic M1/M2/M3 optimization
+```
+
+### Parallelism
+
+Configure parallel embedding execution:
+
+```yaml
+embeddings:
+  - from: model2vec:minishlab/potion-base-8M
+    name: parallel-embed
+    params:
+      parallelism: 8  # Number of threads
+```
+
+### Rate Limiting
+
+For API providers:
+
+```yaml
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: rate-limited
+    params:
+      openai_api_key: ${secrets:key}
+      openai_usage_tier: tier3
+```
+
+## Embedding Dimensions
+
+Different models produce different dimensions:
+
+| Provider | Model | Dimensions |
+|----------|-------|------------|
+| OpenAI | text-embedding-3-small | 1536 |
+| OpenAI | text-embedding-3-large | 3072 |
+| Bedrock | titan-embed-text-v2 | 256-1024 |
+| Bedrock | cohere-embed-v3 | 1024 |
+| Model2Vec | potion-base-8M | 256 |
+| HuggingFace | all-MiniLM-L6-v2 | 384 |
+
+## Health Checks
+
+Spice performs health checks on embedding models:
+
+```bash
+2026-03-03T10:15:30Z INFO Embedding model 'text-embedding' health check passed
+```
+
+Health check embeds a test string to verify:
+- Model availability
+- Credential validity
+- Network connectivity
+
+## Error Handling
+
+Common errors and solutions:
+
+### Model Not Found
+
+```yaml
+# Ensure model name matches
+embeddings:
+  - from: openai:text-embedding-3-small
+    name: text-embedding  # Use this name in API calls
+```
+
+### Rate Limiting
+
+```python
+from openai import RateLimitError
+
+try:
+    response = client.embeddings.create(...)
+except RateLimitError:
+    # Implement backoff
+    time.sleep(60)
+    response = client.embeddings.create(...)
+```
+
+### Dimension Mismatch
+
+```yaml
+# Ensure consistent dimensions across pipeline
+embeddings:
+  - from: openai:text-embedding-3-small  # 1536 dims
+    name: embed
+
+columns:
+  - name: content
+    embeddings:
+      - from: embed  # Must match dimensions
+```
+
+## Best Practices
+
+1. **Choose Appropriate Models**
+   - OpenAI for accuracy
+   - Model2Vec for throughput
+   - Local models for privacy
+
+2. **Enable Caching**
+   - Reduces API costs
+   - Improves response time
+   - Especially important for RAG
+
+3. **Batch Processing**
+   - Process multiple texts together
+   - Respect rate limits
+   - Use appropriate batch sizes
+
+4. **Monitor Performance**
+   - Track embedding latency
+   - Monitor cache hit rates
+   - Adjust parallelism
+
+5. **Vector Storage Selection**
+   - S3 Vectors for petabyte scale
+   - pgvector for PostgreSQL integration
+   - DuckDB for analytical workloads
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RAG" icon="magnifying-glass" href="/ai/rag">
+    Build retrieval-augmented generation workflows
+  </Card>
+  <Card title="Model Providers" icon="server" href="/ai/model-providers">
+    Configure embedding providers
+  </Card>
+  <Card title="Vector Search" icon="search" href="/reference/sql/search">
+    Query embeddings with vector_search
+  </Card>
+  <Card title="OpenAI API" icon="code" href="/ai/openai-compatibility">
+    Use embeddings with OpenAI SDK
+  </Card>
+</CardGroup>

@@ -1,0 +1,351 @@
+---
+title: 'Vector Similarity Search'
+description: 'Semantic search using vector embeddings with the vector_search() UDTF'
+---
+
+Vector similarity search finds semantically similar content by comparing vector embeddings using distance metrics.
+
+## vector_search() UDTF
+
+The `vector_search()` User-Defined Table Function performs vector similarity search:
+
+```sql
+vector_search(
+  table_name,
+  query,
+  [column_name],
+  [limit],
+  [include_score]
+)
+```
+
+### Parameters
+
+- `table_name` (required) - Name of the table with embedded data
+- `query` (required) - Search query string (automatically embedded)
+- `column_name` (optional) - Specific column to search (for multi-column tables)
+- `limit` (optional) - Maximum results to return (default: 1000)
+- `include_score` (optional) - Include `_score` column (default: true)
+
+### Basic Usage
+
+```sql
+-- Simple vector search
+SELECT * FROM vector_search(documents, 'artificial intelligence');
+
+-- Limit results
+SELECT id, title, _score
+FROM vector_search(articles, 'machine learning', limit => 5);
+
+-- Search specific column
+SELECT product_name, description, _score
+FROM vector_search(products, 'wireless earbuds', description, 10);
+```
+
+### Integration with SQL
+
+The `vector_search()` UDTF is a full table expression supporting WHERE, ORDER BY, and JOIN:
+
+```sql
+-- Filter results
+SELECT title, content, _score
+FROM vector_search(articles, 'climate change')
+WHERE publish_date > '2024-01-01'
+  AND category = 'science'
+ORDER BY _score DESC
+LIMIT 10;
+
+-- Join with other tables
+SELECT 
+  v.title,
+  v._score,
+  a.author_name
+FROM vector_search(articles, 'quantum computing') v
+JOIN authors a ON v.author_id = a.id
+WHERE v._score > 0.7;
+
+-- Aggregations
+SELECT 
+  category,
+  COUNT(*) as matches,
+  AVG(_score) as avg_relevance
+FROM vector_search(documents, 'neural networks')
+GROUP BY category;
+```
+
+## Distance Metrics
+
+Spice supports three distance metrics for vector similarity:
+
+### Cosine Similarity (Default)
+
+Measures angle between vectors, normalized to [-1, 1]. Best for text embeddings.
+
+```yaml
+datasets:
+  - name: documents
+    embeddings:
+      - column: content
+        distance_metric: cosine  # default
+```
+
+**Score interpretation**: 1.0 = identical, 0.0 = orthogonal, -1.0 = opposite
+
+### Euclidean Distance (L2)
+
+Measures straight-line distance between points. Good for spatial data.
+
+```yaml
+datasets:
+  - name: images
+    embeddings:
+      - column: image_features
+        distance_metric: euclidean
+```
+
+**Score interpretation**: Lower is more similar (converted to 1/(1+distance))
+
+### Dot Product
+
+Raw inner product of vectors. Efficient but sensitive to magnitude.
+
+```yaml
+datasets:
+  - name: products
+    embeddings:
+      - column: description
+        distance_metric: dot_product
+```
+
+**Score interpretation**: Higher is more similar
+
+## Embedding Configuration
+
+Configure automatic embedding generation in your spicepod.yaml:
+
+### AWS Bedrock
+
+```yaml
+datasets:
+  - name: knowledge_base
+    embeddings:
+      - column: content
+        model:
+          from: bedrock
+          name: amazon.titan-embed-text-v2:0
+        params:
+          aws_region: us-east-1
+```
+
+### HuggingFace
+
+```yaml
+datasets:
+  - name: documents
+    embeddings:
+      - column: text
+        model:
+          from: huggingface
+          name: sentence-transformers/all-MiniLM-L6-v2
+```
+
+### Model2Vec (Fast Static Embeddings)
+
+```yaml
+datasets:
+  - name: articles
+    embeddings:
+      - column: body
+        model:
+          from: model2vec
+          name: minishlab/M2V_base_output
+```
+
+### OpenAI
+
+```yaml
+datasets:
+  - name: faqs
+    embeddings:
+      - column: question
+        model:
+          from: openai
+          name: text-embedding-3-small
+        params:
+          openai_api_key: ${secrets:openai_key}
+```
+
+## Multi-Column Search
+
+Embed and search multiple columns independently:
+
+```yaml
+datasets:
+  - name: products
+    embeddings:
+      - column: title
+        model:
+          from: openai
+          name: text-embedding-3-small
+      - column: description
+        model:
+          from: openai
+          name: text-embedding-3-small
+```
+
+Query specific columns:
+
+```sql
+-- Search titles
+SELECT * FROM vector_search(products, 'laptop', title) LIMIT 5;
+
+-- Search descriptions
+SELECT * FROM vector_search(products, 'portable computer', description) LIMIT 5;
+
+-- Default searches first embedded column
+SELECT * FROM vector_search(products, 'notebook') LIMIT 5;
+```
+
+## Chunked Search
+
+For large text fields, enable chunking to search within document segments:
+
+```yaml
+datasets:
+  - name: documents
+    embeddings:
+      - column: content
+        chunking:
+          enabled: true
+          target_chunk_size: 512
+          overlap: 50
+```
+
+Chunked searches return a special `_match` column with the matched substring:
+
+```sql
+SELECT 
+  id,
+  title,
+  _match,  -- The specific chunk that matched
+  _score
+FROM vector_search(documents, 'machine learning algorithms')
+ORDER BY _score DESC
+LIMIT 5;
+```
+
+## Performance Considerations
+
+### Pre-filtering
+
+Filter before search for better performance:
+
+```sql
+-- Good: Filter pushdown to base table
+SELECT * FROM vector_search(docs, 'query')
+WHERE category = 'tech';  -- Pushed down if possible
+
+-- Better: Use view with pre-filter
+CREATE VIEW tech_docs AS SELECT * FROM documents WHERE category = 'tech';
+SELECT * FROM vector_search(tech_docs, 'query');
+```
+
+### Limit Early
+
+Use the `limit` parameter in the UDTF rather than SQL LIMIT:
+
+```sql
+-- Good: Limit in UDTF
+SELECT * FROM vector_search(docs, 'query', limit => 100)
+WHERE condition;
+
+-- Less efficient: SQL LIMIT after large search
+SELECT * FROM vector_search(docs, 'query')
+LIMIT 100;
+```
+
+### Dimension Optimization
+
+Smaller embedding dimensions = faster search:
+
+- 384 dims: Good balance (MiniLM models)
+- 768 dims: Better accuracy (BERT base)
+- 1536 dims: OpenAI text-embedding-3-small
+- 3072 dims: Highest accuracy, slower (text-embedding-3-large)
+
+## Examples
+
+### Semantic FAQ Search
+
+```sql
+SELECT 
+  question,
+  answer,
+  category,
+  _score
+FROM vector_search(faqs, 'how do I reset my password')
+WHERE _score > 0.6
+ORDER BY _score DESC
+LIMIT 3;
+```
+
+### Product Recommendations
+
+```sql
+-- Find similar products
+WITH current_product AS (
+  SELECT description FROM products WHERE id = 12345
+)
+SELECT 
+  p.id,
+  p.name,
+  p.price,
+  v._score
+FROM current_product cp
+CROSS JOIN LATERAL (
+  SELECT * FROM vector_search(products, cp.description, description)
+) v
+JOIN products p ON v.id = p.id
+WHERE v.id != 12345
+LIMIT 5;
+```
+
+### Context Retrieval for RAG
+
+```sql
+-- Retrieve context for LLM prompt
+SELECT 
+  chunk_text,
+  source_document,
+  _score
+FROM vector_search(knowledge_base, 'explain gradient descent')
+ORDER BY _score DESC
+LIMIT 3;
+```
+
+## Troubleshooting
+
+### No results returned
+
+- Verify embeddings are generated: `SELECT COUNT(*) FROM table WHERE embedding_column IS NOT NULL`
+- Check search column exists and is embedded
+- Try increasing the limit parameter
+
+### Low relevance scores
+
+- Ensure embedding model matches your domain (code, general text, etc.)
+- Consider different distance metrics
+- Verify embeddings are normalized if using cosine similarity
+
+### Slow performance
+
+- Use Amazon S3 Vectors for large datasets
+- Reduce embedding dimensions
+- Add pre-filters to reduce search space
+- Consider partitioning large tables
+
+## See Also
+
+- [Amazon S3 Vectors](/search/s3-vectors) - Petabyte-scale vector storage
+- [Hybrid Search](/search/hybrid-search) - Combine vector and text search
+- [Full-Text Search](/search/full-text-search) - BM25 text search

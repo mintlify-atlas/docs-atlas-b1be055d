@@ -1,0 +1,340 @@
+---
+title: 'Snowflake Data Connector'
+description: 'Connect Spice to Snowflake data warehouses for federated SQL queries'
+---
+
+The Snowflake connector enables Spice to query Snowflake data warehouses with query push-down support using Arrow-based data transfer for high performance.
+
+## Status
+
+**Beta** - Functional with ongoing testing and improvements
+
+## Supported Features
+
+- SQL query push-down (WHERE, JOIN, aggregations)
+- Arrow-based data transfer
+- Multiple warehouse support
+- Role-based access control
+- Data acceleration
+- Schema introspection
+- Connection pooling
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: snowflake-demo
+
+datasets:
+  - from: snowflake:DATABASE.SCHEMA.TABLE
+    name: my_table
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: COMPUTE_WH
+      snowflake_role: accountadmin
+```
+
+### With Data Acceleration
+
+```yaml
+datasets:
+  - from: snowflake:ANALYTICS.PUBLIC.SALES
+    name: sales
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: ANALYTICS_WH
+      snowflake_role: analyst
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 5m
+```
+
+### Multiple Tables with Shared Config
+
+```yaml
+datasets:
+  - from: snowflake:BENCHMARKS.TPCH_SF1.CUSTOMER
+    name: customer
+    params: &snowflake_params
+      snowflake_warehouse: COMPUTE_WH
+      snowflake_role: accountadmin
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_username: ${secrets:snowflake_username}
+
+  - from: snowflake:BENCHMARKS.TPCH_SF1.ORDERS
+    name: orders
+    params: *snowflake_params
+
+  - from: snowflake:BENCHMARKS.TPCH_SF1.LINEITEM
+    name: lineitem
+    params: *snowflake_params
+```
+
+### With Custom Database and Schema
+
+```yaml
+datasets:
+  - from: snowflake:MY_DB.PUBLIC.EVENTS
+    name: events
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: EVENT_WH
+      snowflake_database: MY_DB
+      snowflake_schema: PUBLIC
+```
+
+## Parameters
+
+<ParamField path="snowflake_account" type="string" required>
+  Snowflake account identifier (e.g., `xy12345.us-east-1`)
+</ParamField>
+
+<ParamField path="snowflake_username" type="string" required>
+  Snowflake username
+</ParamField>
+
+<ParamField path="snowflake_password" type="string" required>
+  Snowflake password
+</ParamField>
+
+<ParamField path="snowflake_warehouse" type="string" required>
+  Snowflake virtual warehouse name
+</ParamField>
+
+<ParamField path="snowflake_role" type="string" default="PUBLIC">
+  Snowflake role to use for queries
+</ParamField>
+
+<ParamField path="snowflake_database" type="string">
+  Default database (can be overridden in table reference)
+</ParamField>
+
+<ParamField path="snowflake_schema" type="string">
+  Default schema (can be overridden in table reference)
+</ParamField>
+
+<ParamField path="client_timeout" type="duration" default="30s">
+  Timeout for Snowflake operations (e.g., `60s`, `5m`)
+</ParamField>
+
+## Authentication
+
+### Username and Password
+
+Standard authentication with username and password:
+
+```yaml
+params:
+  snowflake_account: xy12345.us-east-1
+  snowflake_username: ${secrets:snowflake_username}
+  snowflake_password: ${secrets:snowflake_password}
+```
+
+### Environment Variables
+
+```yaml
+params:
+  snowflake_account: ${env:SNOWFLAKE_ACCOUNT}
+  snowflake_username: ${env:SNOWFLAKE_USERNAME}
+  snowflake_password: ${env:SNOWFLAKE_PASSWORD}
+  snowflake_warehouse: ${env:SNOWFLAKE_WAREHOUSE}
+```
+
+## Use Cases
+
+### Cloud Data Warehouse Analytics
+
+```yaml
+datasets:
+  - from: snowflake:WAREHOUSE.PROD.SALES_DATA
+    name: sales
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: ANALYTICS_WH
+      snowflake_role: analyst
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_interval: 1h
+```
+
+Query accelerated data:
+
+```sql
+SELECT 
+  region,
+  product_category,
+  SUM(revenue) as total_revenue,
+  COUNT(DISTINCT customer_id) as unique_customers
+FROM sales
+WHERE order_date >= CURRENT_DATE - INTERVAL '30' DAY
+GROUP BY region, product_category
+ORDER BY total_revenue DESC;
+```
+
+### Multi-Warehouse Query
+
+```yaml
+datasets:
+  - from: snowflake:PROD.PUBLIC.CUSTOMERS
+    name: customers
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: CUSTOMER_WH
+      snowflake_role: reader
+
+  - from: snowflake:PROD.PUBLIC.TRANSACTIONS
+    name: transactions
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: TRANSACTION_WH  # Different warehouse
+      snowflake_role: reader
+```
+
+### Federated Query with Operational Database
+
+```yaml
+datasets:
+  - from: snowflake:EDW.PUBLIC.HISTORICAL_ORDERS
+    name: historical_orders
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: EDW_WH
+
+  - from: postgres:public.recent_orders
+    name: recent_orders
+    params:
+      pg_host: operational-db.internal
+      pg_db: orders
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+```
+
+Query across both:
+
+```sql
+SELECT 
+  'historical' as source,
+  DATE_TRUNC('month', order_date) as month,
+  COUNT(*) as order_count
+FROM historical_orders
+WHERE order_date < CURRENT_DATE - INTERVAL '90' DAY
+GROUP BY month
+
+UNION ALL
+
+SELECT 
+  'recent' as source,
+  DATE_TRUNC('month', order_date) as month,
+  COUNT(*) as order_count
+FROM recent_orders
+WHERE order_date >= CURRENT_DATE - INTERVAL '90' DAY
+GROUP BY month
+
+ORDER BY month;
+```
+
+### Cost Optimization with Acceleration
+
+```yaml
+datasets:
+  - from: snowflake:COST_CENTER.PUBLIC.LARGE_DATASET
+    name: large_dataset
+    params:
+      snowflake_account: ${secrets:snowflake_account}
+      snowflake_username: ${secrets:snowflake_username}
+      snowflake_password: ${secrets:snowflake_password}
+      snowflake_warehouse: XSMALL_WH  # Use smallest warehouse
+      snowflake_role: cost_optimizer
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 24h  # Infrequent refresh to minimize warehouse usage
+```
+
+## Performance Tips
+
+1. **Use Acceleration**: For frequently queried data, acceleration dramatically reduces Snowflake compute costs
+2. **Right-Size Warehouses**: Match warehouse size to query needs
+3. **Query Push-down**: Spice pushes WHERE, JOIN, and aggregations to Snowflake
+4. **Refresh Intervals**: Balance data freshness with cost by adjusting refresh intervals
+5. **Partition Tables**: Snowflake clustering keys improve query performance
+6. **Arrow Format**: Connector uses Arrow for efficient data transfer
+
+## Warehouse Management
+
+### Auto-Suspend and Auto-Resume
+
+Snowflake warehouses auto-suspend when idle. Spice queries will auto-resume warehouses:
+
+```yaml
+params:
+  snowflake_warehouse: AUTO_SUSPEND_WH
+  client_timeout: 120s  # Allow time for warehouse startup
+```
+
+### Dedicated Warehouse for Spice
+
+Create a dedicated warehouse for Spice queries:
+
+```sql
+-- In Snowflake
+CREATE WAREHOUSE SPICE_WH WITH
+  WAREHOUSE_SIZE = 'XSMALL'
+  AUTO_SUSPEND = 60
+  AUTO_RESUME = TRUE;
+
+GRANT USAGE ON WAREHOUSE SPICE_WH TO ROLE spice_role;
+```
+
+```yaml
+params:
+  snowflake_warehouse: SPICE_WH
+  snowflake_role: spice_role
+```
+
+## Data Type Mapping
+
+Snowflake types are automatically mapped to Arrow types:
+
+- `NUMBER`, `INT` → `Int64`
+- `FLOAT`, `DOUBLE` → `Float64`
+- `VARCHAR`, `TEXT` → `Utf8`
+- `BOOLEAN` → `Boolean`
+- `DATE` → `Date32`
+- `TIMESTAMP` → `Timestamp`
+- `VARIANT` → `Utf8` (JSON string)
+
+## Limitations
+
+- Write operations not supported (read-only)
+- Semi-structured data (VARIANT, ARRAY, OBJECT) returned as JSON strings
+- Query result size limited by available memory
+- Warehouse must be running or auto-resume enabled
+
+## Related Resources
+
+- [Snowflake Documentation](https://docs.snowflake.com/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)
+- [Snowflake Virtual Warehouses](https://docs.snowflake.com/en/user-guide/warehouses)

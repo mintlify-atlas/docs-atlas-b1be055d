@@ -1,0 +1,236 @@
+---
+title: 'spice run'
+description: 'Start the Spice runtime'
+---
+
+The `spice run` command starts the Spice.ai runtime (`spiced`), automatically installing it if not present.
+
+## Usage
+
+```bash
+spice run [OPTIONS] [-- SPICED_ARGS...]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--http-endpoint <URL>` | `http://127.0.0.1:8090` | HTTP endpoint for runtime binding |
+| `--flight-endpoint <URL>` | `127.0.0.1:50051` | Arrow Flight endpoint |
+| `--metrics-endpoint <URL>` | `127.0.0.1:9090` | Prometheus metrics endpoint |
+| `-v, --verbose` | - | Increase verbosity (`-v` debug, `-vv` trace) |
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `SPICED_ARGS` | Additional arguments passed directly to `spiced` |
+
+## Behavior
+
+### Auto-Installation
+
+If the runtime is not installed at `~/.spice/bin/spiced`, the command automatically runs `spice install` before starting.
+
+### Signal Handling
+
+The CLI forwards signals to the runtime for graceful shutdown:
+
+- **Unix (Linux/macOS):** `SIGTERM` and `SIGINT` are forwarded to `spiced`
+- **Windows:** Ctrl+C propagates to child process automatically
+
+### Standard I/O
+
+All standard input, output, and error streams are inherited, allowing:
+- Interactive prompts
+- Direct log output
+- Pipe input/output redirection
+
+## Examples
+
+### Basic Usage
+
+Start the runtime with default settings:
+
+```bash
+spice run
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.0.0
+Spice.ai runtime starting...
+2026-03-03T12:00:00.000Z INFO Runtime starting...
+2026-03-03T12:00:00.100Z INFO HTTP listening on 127.0.0.1:8090
+2026-03-03T12:00:00.150Z INFO Flight listening on 127.0.0.1:50051
+```
+
+### Custom HTTP Endpoint
+
+Bind to a specific interface and port:
+
+```bash
+spice run --http-endpoint http://0.0.0.0:8080
+```
+
+This makes the runtime accessible from other machines on the network.
+
+### Verbose Logging
+
+Enable debug logging:
+
+```bash
+spice run -v
+```
+
+Enable trace logging:
+
+```bash
+spice run -vv
+```
+
+### Custom Flight and Metrics Endpoints
+
+```bash
+spice run \
+  --http-endpoint http://0.0.0.0:8090 \
+  --flight-endpoint 0.0.0.0:50051 \
+  --metrics-endpoint 0.0.0.0:9090
+```
+
+### Pass Additional Runtime Arguments
+
+Arguments after `--` are passed directly to `spiced`:
+
+```bash
+spice run -- --log-level trace --disable-telemetry
+```
+
+### Run with Spicepod from URL
+
+Load configuration from a remote location:
+
+```bash
+# From HTTPS URL
+spice run -- https://example.com/spicepod.yaml
+
+# From S3 (requires AWS credentials)
+spice run -- s3://my-bucket/spicepod.yaml
+
+# From local file
+spice run -- /path/to/spicepod.yaml
+```
+
+### Development Mode with Hot Reload
+
+The runtime automatically watches for changes to `spicepod.yaml` and component files in the `datasets/` and `models/` directories:
+
+```bash
+spice run
+# Edit spicepod.yaml - runtime reloads automatically
+```
+
+## Configuration
+
+### Spicepod Location
+
+By default, `spice run` looks for `spicepod.yaml` in the current directory. Override with:
+
+```bash
+spice run -- /path/to/custom/spicepod.yaml
+```
+
+### Environment Variables
+
+The runtime inherits environment variables from the shell:
+
+```bash
+export SPICE_POSTGRES_CONNECTION_STRING="postgresql://user:pass@host/db"
+spice run
+```
+
+Or load from `.env` / `.env.local` files:
+
+```bash
+# .env
+SPICE_POSTGRES_CONNECTION_STRING=postgresql://user:pass@host/db
+SPICE_API_KEY=your_api_key
+```
+
+### Runtime Arguments
+
+Common `spiced` arguments you can pass:
+
+| Argument | Description |
+|----------|-------------|
+| `--http <ADDR>` | HTTP bind address (set via `--http-endpoint`) |
+| `--flight <ADDR>` | Flight bind address (set via `--flight-endpoint`) |
+| `--metrics <ADDR>` | Metrics bind address (set via `--metrics-endpoint`) |
+| `--log-level <LEVEL>` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| `--disable-telemetry` | Disable anonymous telemetry |
+| `--tls-enabled` | Enable TLS for HTTP/Flight endpoints |
+
+## Graceful Shutdown
+
+Press `Ctrl+C` or send `SIGTERM` to gracefully stop the runtime:
+
+```bash
+spice run
+^C
+```
+
+**Output:**
+```
+2026-03-03T12:05:00.000Z INFO Received shutdown signal
+2026-03-03T12:05:00.100Z INFO Draining connections...
+2026-03-03T12:05:00.200Z INFO Runtime shutdown complete
+```
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Clean shutdown |
+| `1` | Runtime error or installation failure |
+| Other | Exit code from `spiced` |
+
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+spice run --http-endpoint http://127.0.0.1:8091
+```
+
+### Permission Denied
+
+```bash
+# macOS/Linux: Verify executable permissions
+ls -la ~/.spice/bin/spiced
+chmod +x ~/.spice/bin/spiced
+```
+
+### Runtime Not Found
+
+Manually install:
+
+```bash
+spice install
+spice run
+```
+
+## Related Commands
+
+- [`spice init`](/cli/init) - Initialize a Spice app
+- [`spice sql`](/cli/sql) - Query the running runtime
+- [`spice upgrade`](/cli/upgrade) - Upgrade to latest runtime version
+- [`spice status`](https://spiceai.org/docs/cli/status) - Check runtime status
+
+## Runtime Architecture
+
+The runtime uses separate Tokio thread pools for:
+
+- **HTTP Server:** API endpoints, health checks (must stay responsive)
+- **Query Processing:** DataFusion execution (CPU/IO intensive)
+
+This ensures health checks respond even during heavy query load.

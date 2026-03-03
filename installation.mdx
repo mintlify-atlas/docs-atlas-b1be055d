@@ -1,0 +1,333 @@
+---
+title: 'Installation'
+description: 'Install the Spice CLI and runtime on macOS, Linux, and Windows'
+---
+
+## Overview
+
+Spice provides a command-line interface (CLI) and runtime that can be installed on macOS, Linux, and Windows.
+
+The Spice CLI (`spice`) is used to initialize apps, manage datasets, and interact with the runtime. The Spice runtime (`spiced`) is the core engine that executes queries, manages data acceleration, and serves APIs.
+
+## Quick Install
+
+<CodeGroup>
+```bash macOS/Linux/WSL
+curl https://install.spiceai.org | /bin/bash
+```
+
+```bash Homebrew
+brew install spiceai/spiceai/spice
+```
+
+```powershell Windows PowerShell
+iex ((New-Object System.Net.WebClient).DownloadString("https://install.spiceai.org/Install.ps1"))
+```
+</CodeGroup>
+
+## Platform-Specific Installation
+
+<Steps>
+  <Step title="macOS and Linux">
+    ### Using the install script
+
+    The recommended way to install Spice on macOS and Linux is using the install script:
+
+    ```bash
+    curl https://install.spiceai.org | /bin/bash
+    ```
+
+    This script will:
+    - Download the latest release for your platform (macOS or Linux)
+    - Install the `spice` CLI to `$HOME/.spice/bin`
+    - Automatically add the Spice CLI to your PATH in your shell profile
+
+    <Info>
+    The installer supports bash, zsh, fish, ksh, and csh shells. It will detect your shell and update the appropriate profile file.
+    </Info>
+
+    ### Using Homebrew
+
+    Alternatively, you can install Spice using Homebrew:
+
+    ```bash
+    brew install spiceai/spiceai/spice
+    ```
+
+    ### Manual PATH Configuration
+
+    If the installer doesn't automatically add Spice to your PATH, add the following to your shell profile:
+
+    <CodeGroup>
+    ```bash bash/zsh/ksh
+    export PATH="$HOME/.spice/bin:$PATH"
+    ```
+
+    ```fish fish
+    fish_add_path $HOME/.spice/bin
+    ```
+
+    ```csh csh/tcsh
+    setenv PATH "$HOME/.spice/bin:$PATH"
+    ```
+    </CodeGroup>
+
+    Then reload your shell:
+
+    ```bash
+    source ~/.bash_profile  # or ~/.zprofile, ~/.config/fish/config.fish, etc.
+    ```
+  </Step>
+
+  <Step title="Windows">
+    ### Using PowerShell
+
+    Install Spice on Windows using PowerShell:
+
+    ```powershell
+    iex ((New-Object System.Net.WebClient).DownloadString("https://install.spiceai.org/Install.ps1"))
+    ```
+
+    This script will:
+    - Download the latest Windows release (x86_64)
+    - Install the `spice.exe` CLI to `$HOME\.spice\bin`
+    - Automatically add the Spice CLI directory to your user PATH
+
+    <Info>
+    You may need to restart your terminal or PowerShell session for the PATH changes to take effect.
+    </Info>
+
+    ### Verifying the Installation
+
+    After installation, verify that Spice is available:
+
+    ```powershell
+    spice version
+    ```
+
+    If the command is not found, you may need to restart your terminal or manually add `$HOME\.spice\bin` to your PATH.
+  </Step>
+
+  <Step title="Supported Platforms">
+    Spice provides pre-built binaries for the following platforms:
+
+    | Platform | Architecture | Status |
+    |----------|-------------|--------|
+    | Linux | x86_64 | ✅ Supported |
+    | Linux | aarch64 (ARM64) | ✅ Supported |
+    | macOS | aarch64 (Apple Silicon) | ✅ Supported |
+    | Windows | x86_64 | ✅ Supported |
+
+    <Warning>
+    If your platform is not listed above, you may need to build Spice from source. See the [GitHub repository](https://github.com/spiceai/spiceai) for build instructions.
+    </Warning>
+  </Step>
+</Steps>
+
+## Docker Installation
+
+Spice is available as a Docker image for containerized deployments:
+
+<CodeGroup>
+```bash Pull Image
+docker pull spiceai/spiceai
+```
+
+```bash Run Container
+docker run -p 8090:8090 -p 50051:50051 spiceai/spiceai
+```
+
+```dockerfile Dockerfile
+FROM spiceai/spiceai:latest
+
+# Copy your spicepod.yaml
+COPY spicepod.yaml /app/spicepod.yaml
+
+WORKDIR /app
+
+CMD ["spiced"]
+```
+</CodeGroup>
+
+<Info>
+The Docker image exposes:
+- Port **8090**: HTTP API
+- Port **50051**: Arrow Flight API
+- Port **9090**: Metrics
+</Info>
+
+## Kubernetes Installation
+
+Deploy Spice to Kubernetes using Helm:
+
+<Steps>
+  <Step title="Add the Helm repository">
+    ```bash
+    helm repo add spiceai https://helm.spiceai.org
+    helm repo update
+    ```
+  </Step>
+
+  <Step title="Install Spice">
+    ```bash
+    helm install spiceai spiceai/spiceai
+    ```
+
+    Or with custom values:
+
+    ```bash
+    helm install spiceai spiceai/spiceai -f values.yaml
+    ```
+  </Step>
+
+  <Step title="Verify the deployment">
+    ```bash
+    kubectl get pods
+    kubectl logs -l app=spiceai
+    ```
+  </Step>
+</Steps>
+
+## Verifying Installation
+
+After installation, verify that Spice is working correctly:
+
+<Steps>
+  <Step title="Check version">
+    ```bash
+    spice version
+    ```
+
+    This should display the installed version of Spice.
+  </Step>
+
+  <Step title="Initialize a test app">
+    ```bash
+    spice init test_app
+    cd test_app
+    ```
+  </Step>
+
+  <Step title="Run the runtime">
+    ```bash
+    spice run
+    ```
+
+    You should see output indicating the runtime has started successfully:
+
+    ```bash
+    2025/01/20 11:26:10 INFO Spice.ai runtime starting...
+    2025-01-20T19:26:10.679716Z  INFO runtime::flight: Spice Runtime Flight listening on 127.0.0.1:50051
+    2025-01-20T19:26:10.680140Z  INFO runtime::http: Spice Runtime HTTP listening on 127.0.0.1:8090
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+You can customize the installation using environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|--------|
+| `SPICE_CLI_INSTALL_DIR` | Installation directory for the CLI | `$HOME/.spice/bin` |
+| `USE_SUDO` | Use sudo for installation (Linux) | `false` |
+| `GITHUB_TOKEN` | GitHub token for API access (optional) | None |
+
+### Example: Custom Installation Directory
+
+```bash
+export SPICE_CLI_INSTALL_DIR="/usr/local/bin"
+curl https://install.spiceai.org | /bin/bash
+```
+
+## Upgrading Spice
+
+To upgrade to the latest version of Spice, simply re-run the installation command:
+
+<CodeGroup>
+```bash macOS/Linux
+curl https://install.spiceai.org | /bin/bash
+```
+
+```bash Homebrew
+brew upgrade spice
+```
+
+```powershell Windows
+iex ((New-Object System.Net.WebClient).DownloadString("https://install.spiceai.org/Install.ps1"))
+```
+</CodeGroup>
+
+## Uninstalling Spice
+
+To uninstall Spice:
+
+<Steps>
+  <Step title="Remove the binary">
+    ```bash
+    rm -rf $HOME/.spice
+    ```
+  </Step>
+
+  <Step title="Remove PATH configuration">
+    Edit your shell profile (e.g., `~/.bash_profile`, `~/.zprofile`) and remove the line that adds Spice to your PATH:
+
+    ```bash
+    export PATH="$HOME/.spice/bin:$PATH"
+    ```
+  </Step>
+
+  <Step title="Reload your shell">
+    ```bash
+    source ~/.bash_profile  # or your shell profile
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Command not found after installation
+
+If you see "command not found" after installation:
+
+1. Restart your terminal or shell session
+2. Verify the PATH was updated in your shell profile
+3. Manually source your shell profile: `source ~/.bash_profile` (or appropriate file)
+4. Check that the binary exists: `ls -la $HOME/.spice/bin/spice`
+
+### Permission denied errors
+
+If you encounter permission errors during installation:
+
+- **Linux**: The installer will automatically use `sudo` if needed
+- **macOS**: Ensure you have write permissions to `$HOME/.spice/bin`
+- **Windows**: Run PowerShell as Administrator
+
+### Download failures
+
+If the download fails:
+
+1. Check your internet connection
+2. Verify you can access `https://github.com`
+3. Try setting `GITHUB_TOKEN` if you're hitting rate limits
+4. Download the release manually from [GitHub Releases](https://github.com/spiceai/spiceai/releases)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get started with your first Spice app
+  </Card>
+  
+  <Card title="Documentation" icon="file-text" href="https://spiceai.org/docs">
+    Read the full documentation
+  </Card>
+  
+  <Card title="System Requirements" icon="server" href="https://spiceai.org/docs/reference/system_requirements">
+    Learn about system requirements and supported platforms
+  </Card>
+  
+  <Card title="GitHub" icon="github" href="https://github.com/spiceai/spiceai">
+    View the source code and contribute
+  </Card>
+</CardGroup>

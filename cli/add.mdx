@@ -1,0 +1,315 @@
+---
+title: 'spice add'
+description: 'Add Spicepod dependencies to your project'
+---
+
+The `spice add` command adds a Spicepod dependency to your project by downloading it and updating `spicepod.yaml`.
+
+## Usage
+
+```bash
+spice add <POD_PATH>
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `POD_PATH` | Spicepod reference (e.g., `spiceai/quickstart`, `./local/path`, `org/name@v1.0`) |
+
+## Pod Path Formats
+
+### Registry Pod
+
+Reference pods from the Spice.ai registry:
+
+```bash
+spice add spiceai/quickstart
+```
+
+### Versioned Pod
+
+Pin to a specific version:
+
+```bash
+spice add spiceai/quickstart@v1.2.0
+```
+
+### Local Path
+
+Reference a local directory:
+
+```bash
+spice add ./shared/datasets
+spice add ../common/spicepods/analytics
+```
+
+### Organization Pod
+
+Reference pods from an organization:
+
+```bash
+spice add acme/sales-analytics
+spice add acme/sales-analytics@latest
+```
+
+## Behavior
+
+### Download
+
+The command downloads the Spicepod to `spicepods/<path>/` in your project directory:
+
+```
+my_app/
+├── spicepod.yaml
+└── spicepods/
+    └── spiceai/
+        └── quickstart/
+            └── spicepod.yaml
+```
+
+### Update spicepod.yaml
+
+Adds the dependency to your `spicepod.yaml`:
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+dependencies:
+  - spiceai/quickstart  # Added by spice add
+```
+
+### Create spicepod.yaml
+
+If `spicepod.yaml` doesn't exist, the command creates it automatically:
+
+```bash
+mkdir new_project
+cd new_project
+spice add spiceai/quickstart
+```
+
+**Output:**
+```
+Getting Spicepod spiceai/quickstart ...
+spicepod.yaml initialized!
+added spicepods/spiceai/quickstart
+```
+
+## Examples
+
+### Add Registry Pod
+
+```bash
+spice add spiceai/quickstart
+```
+
+**Output:**
+```
+Getting Spicepod spiceai/quickstart ...
+added spicepods/spiceai/quickstart
+```
+
+### Add Multiple Pods
+
+```bash
+spice add spiceai/quickstart
+spice add spiceai/bitcoin
+spice add spiceai/eth-recent-blocks
+```
+
+**Resulting spicepod.yaml:**
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+dependencies:
+  - spiceai/quickstart
+  - spiceai/bitcoin
+  - spiceai/eth-recent-blocks
+```
+
+### Add Versioned Pod
+
+```bash
+spice add spiceai/analytics@v2.1.0
+```
+
+**spicepod.yaml:**
+```yaml
+dependencies:
+  - spiceai/analytics@v2.1.0
+```
+
+### Add Local Pod
+
+```bash
+spice add ./shared/datasets
+```
+
+**Output:**
+```
+Getting Spicepod ./shared/datasets ...
+added spicepods/shared/datasets
+```
+
+### Re-adding Existing Pod
+
+If a pod is already in dependencies, it's skipped:
+
+```bash
+spice add spiceai/quickstart
+spice add spiceai/quickstart  # No-op
+```
+
+**Output (second command):**
+```
+Getting Spicepod spiceai/quickstart ...
+added spicepods/spiceai/quickstart
+```
+
+The pod is re-downloaded but not duplicated in `dependencies`.
+
+## Authentication
+
+### Public Pods
+
+No authentication required:
+
+```bash
+spice add spiceai/quickstart
+```
+
+### Private Pods
+
+Provide API key:
+
+```bash
+spice add private-org/internal-data --api-key <key>
+```
+
+Or set environment variable:
+
+```bash
+export SPICE_API_KEY=<key>
+spice add private-org/internal-data
+```
+
+## Pod Contents
+
+Downloaded pods contain:
+
+- **spicepod.yaml** - Pod configuration
+- **datasets/** - Dataset definitions
+- **models/** - Model definitions
+- **README.md** - Documentation
+
+Example structure:
+
+```
+spicepods/spiceai/quickstart/
+├── spicepod.yaml
+├── datasets/
+│   └── taxi_trips/
+│       └── dataset.yaml
+└── README.md
+```
+
+## Dependency Resolution
+
+When you run `spice run`, the runtime:
+
+1. Loads your `spicepod.yaml`
+2. Downloads/updates dependencies from `dependencies` list
+3. Loads datasets/models from dependencies
+4. Merges all configurations
+
+Dependencies can themselves have dependencies (transitive dependencies).
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success - Pod downloaded and dependency added |
+| `1` | Error - Invalid path, network error, or authentication failure |
+
+## Troubleshooting
+
+### Pod Not Found
+
+```
+Error: Failed to fetch Spicepod: 404 Not Found
+```
+
+Verify the pod path:
+
+```bash
+spice add spiceai/correct-name
+```
+
+### Authentication Required
+
+```
+Error: Failed to fetch Spicepod: 401 Unauthorized
+```
+
+Provide API key:
+
+```bash
+spice add private-org/pod --api-key <key>
+```
+
+### Network Error
+
+```
+Error: Failed to fetch Spicepod: Connection refused
+```
+
+Check internet connection and retry.
+
+### Invalid spicepod.yaml
+
+If the current `spicepod.yaml` is malformed:
+
+```
+Error: Failed to parse spicepod.yaml: ...
+```
+
+Fix the YAML syntax before running `spice add`.
+
+## Related Commands
+
+- [`spice init`](/cli/init) - Initialize a new Spice app
+- [`spice run`](/cli/run) - Run with dependencies loaded
+- [`spice connect`](https://spiceai.org/docs/cli/connect) - Connect to Spice Cloud app
+
+## Spice Registry
+
+Browse available pods at [spiceai.org/registry](https://spiceai.org/registry) or search:
+
+```bash
+# Visit the registry to find pods
+open https://spiceai.org/registry
+```
+
+Popular pods:
+
+- `spiceai/quickstart` - Sample datasets for getting started
+- `spiceai/bitcoin` - Bitcoin blockchain data
+- `spiceai/eth-recent-blocks` - Ethereum recent blocks
+- `spiceai/taxi_trips` - NYC taxi trip data
+
+## Custom Headers
+
+For advanced use cases, headers are passed to the registry:
+
+```bash
+spice add custom-org/pod \
+  --api-key <key> \
+  --http-endpoint https://custom-registry.example.com
+```
+
+The command uses the global `--http-endpoint` and `--api-key` flags for registry communication.

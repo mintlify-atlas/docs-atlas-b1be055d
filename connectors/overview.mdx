@@ -1,0 +1,145 @@
+---
+title: 'Data Connectors Overview'
+description: 'Connect Spice to 30+ data sources for federated SQL query and data acceleration'
+---
+
+Spice provides a comprehensive set of data connectors that enable federated SQL queries across databases, data warehouses, data lakes, and file systems. Each connector supports reading data from external sources, with many also supporting data acceleration and materialization.
+
+## How Data Connectors Work
+
+Data connectors in Spice allow you to:
+
+- **Federate queries** across multiple data sources using standard SQL
+- **Accelerate data** by materializing datasets locally with Arrow, DuckDB, SQLite, or PostgreSQL
+- **Push down operations** like filters and projections to source systems for optimal performance
+- **Connect securely** using environment variables, secrets, or configuration parameters
+
+## Supported Connectors
+
+Spice supports 30+ data connectors with varying levels of maturity:
+
+| Name | Description | Status | Protocol/Format |
+|------|-------------|--------|----------------|
+| `databricks (mode: delta_lake)` | [Databricks](https://github.com/spiceai/cookbook/blob/trunk/databricks/README.md) | Stable | S3/Delta Lake |
+| `delta_lake` | Delta Lake | Stable | Delta Lake |
+| `dremio` | [Dremio](https://github.com/spiceai/cookbook/tree/trunk/dremio) | Stable | Arrow Flight |
+| `duckdb` | DuckDB | Stable | Embedded |
+| `file` | File | Stable | Parquet, CSV |
+| `github` | GitHub | Stable | GitHub API |
+| `postgres` | PostgreSQL | Stable | |
+| `s3` | [S3](https://github.com/spiceai/cookbook/tree/trunk/s3) | Stable | Parquet, CSV |
+| `mysql` | MySQL | Stable | |
+| `spice.ai` | [Spice.ai](https://github.com/spiceai/cookbook/tree/trunk/spiceai) | Stable | Arrow Flight |
+| `graphql` | GraphQL | Release Candidate | JSON |
+| `dynamodb` | Amazon DynamoDB | Release Candidate | |
+| `databricks (mode: spark_connect)` | [Databricks](https://github.com/spiceai/cookbook/blob/trunk/databricks/README.md) | Beta | [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) |
+| `flightsql` | FlightSQL | Beta | Arrow Flight SQL |
+| `iceberg` | [Apache Iceberg](https://github.com/spiceai/cookbook/tree/trunk/catalogs/iceberg) | Beta | Parquet |
+| `mssql` | Microsoft SQL Server | Beta | Tabular Data Stream (TDS) |
+| `odbc` | ODBC | Beta | ODBC |
+| `snowflake` | Snowflake | Beta | Arrow |
+| `spark` | Spark | Beta | [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) |
+| `oracle` | Oracle | Alpha | [Oracle ODPI-C](https://oracle.github.io/odpi/) |
+| `abfs` | Azure BlobFS | Alpha | Parquet, CSV |
+| `clickhouse` | ClickHouse | Alpha | |
+| `debezium` | Debezium CDC | Alpha | Kafka + JSON |
+| `gcs`, `gs` | Google Cloud Storage | Alpha | Parquet, CSV, JSON |
+| `kafka` | Kafka | Alpha | Kafka + JSON |
+| `ftp`, `sftp` | FTP/SFTP | Alpha | Parquet, CSV |
+| `glue` | [AWS Glue](https://github.com/spiceai/cookbook/tree/trunk/glue) | Alpha | Iceberg, Parquet, CSV |
+| `http`, `https` | HTTP(s) | Alpha | Parquet, CSV, JSON |
+| `imap` | IMAP | Alpha | IMAP Emails |
+| `localpod` | [Local dataset replication](https://github.com/spiceai/cookbook/blob/trunk/localpod/README.md) | Alpha | |
+| `mongodb` | MongoDB | Alpha | |
+| `sharepoint` | Microsoft SharePoint | Alpha | Unstructured UTF-8 documents |
+| `scylladb` | ScyllaDB | Alpha | |
+| `smb` | SMB (Server Message Block) | Alpha | SMB |
+| `elasticsearch` | ElasticSearch | Roadmap | |
+
+## Status Definitions
+
+- **Stable**: Production-ready with comprehensive testing and documentation
+- **Release Candidate**: Feature-complete with ongoing testing
+- **Beta**: Functional with some limitations; feedback welcome
+- **Alpha**: Early access; expect changes and potential issues
+- **Roadmap**: Planned for future development
+
+## Configuration Basics
+
+All connectors are configured in the `spicepod.yaml` file:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my-app
+
+datasets:
+  - from: postgres:public.users
+    name: users
+    params:
+      pg_host: localhost
+      pg_port: 5432
+      pg_user: admin
+      pg_pass: ${secrets:pg_password}
+      pg_db: mydb
+```
+
+## Common Features
+
+### Data Acceleration
+
+Most connectors support local data acceleration for faster queries:
+
+```yaml
+datasets:
+  - from: postgres:public.orders
+    name: orders
+    params:
+      pg_host: localhost
+      pg_db: mydb
+    acceleration:
+      enabled: true
+      engine: arrow  # arrow, duckdb, sqlite, postgres, cayenne
+      refresh_interval: 10s
+```
+
+### Query Push-down
+
+Spice automatically pushes down filters, projections, and aggregations to source systems when supported:
+
+```sql
+-- Spice pushes the WHERE clause to PostgreSQL
+SELECT * FROM users WHERE age > 25;
+```
+
+### Secret Management
+
+Use environment variables or the secrets store for sensitive credentials:
+
+```yaml
+params:
+  pg_pass: ${secrets:pg_password}  # From secret store
+  pg_host: ${env:DB_HOST}          # From environment
+```
+
+## Performance Considerations
+
+1. **Federated Queries**: When querying data directly from sources, performance depends on the source system and network latency
+2. **Acceleration**: Enable acceleration for frequently accessed datasets to achieve sub-second query times
+3. **Push-down**: Spice optimizes queries by pushing operations to the source when possible
+4. **Partitioning**: Some connectors support partitioning for parallel data loading
+
+## Next Steps
+
+Explore detailed documentation for specific connectors:
+
+- [S3 Connector](/connectors/s3) - Query Parquet and CSV files in S3
+- [PostgreSQL Connector](/connectors/postgres) - Connect to PostgreSQL databases
+- [MySQL Connector](/connectors/mysql) - Connect to MySQL databases
+- [Databricks Connector](/connectors/databricks) - Access Databricks Delta Lake and Spark
+- [Snowflake Connector](/connectors/snowflake) - Query Snowflake data warehouses
+- [DuckDB Connector](/connectors/duckdb) - Query DuckDB databases
+- [ClickHouse Connector](/connectors/clickhouse) - Connect to ClickHouse
+- [MongoDB Connector](/connectors/mongodb) - Query MongoDB collections
+
+For more examples, see the [Spice Cookbook](https://github.com/spiceai/cookbook).

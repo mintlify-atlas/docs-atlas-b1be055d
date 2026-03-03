@@ -1,0 +1,707 @@
+---
+title: 'Model Context Protocol (MCP) Integration'
+description: 'Function calling and tool integration via MCP HTTP+SSE'
+---
+
+Spice integrates with the Model Context Protocol (MCP) to provide function calling and tool integration for AI agents using HTTP and Server-Sent Events (SSE).
+
+## Overview
+
+MCP integration enables:
+
+1. **Tool Discovery** - Automatically discover available tools from MCP servers
+2. **Function Calling** - LLMs can call tools to retrieve data or perform actions
+3. **HTTP+SSE Protocol** - Standard HTTP requests with SSE for real-time updates
+4. **Multi-Tool Support** - Connect to multiple MCP servers simultaneously
+5. **OpenAI Compatibility** - Works with OpenAI's function calling format
+
+## Architecture
+
+```
+┌─────────────┐     HTTP+SSE     ┌──────────────┐
+│  LLM Model  │ ◄────────────────┤ Spice Runtime│
+└─────────────┘                  └──────────────┘
+       │                                 │
+       │ Tool Calls                      │ MCP Protocol
+       │                                 │
+       ▼                                 ▼
+┌─────────────────────────────────────────────┐
+│            MCP Server (HTTP+SSE)            │
+├─────────────────────────────────────────────┤
+│  • Database queries                         │
+│  • API calls                                │
+│  • File operations                          │
+│  • Custom business logic                    │
+└─────────────────────────────────────────────┘
+```
+
+## Configuration
+
+Define MCP tools in `spicepod.yaml`:
+
+```yaml
+version: v1
+kind: Spicepod
+name: agent-app
+
+models:
+  - from: openai:gpt-4o-mini
+    name: agent-model
+    params:
+      openai_api_key: ${secrets:openai_key}
+
+tools:
+  - from: mcp:http://localhost:3000
+    name: database-tools
+  
+  - from: mcp:http://localhost:3001
+    name: api-tools
+```
+
+## Basic Usage
+
+### 1. Define Available Tools
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="not-needed"
+)
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "query_database",
+            "description": "Query the database using SQL",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": "SQL query to execute"
+                    }
+                },
+                "required": ["sql"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get current weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City name"
+                    }
+                },
+                "required": ["location"]
+            }
+        }
+    }
+]
+```
+
+### 2. Request with Tools
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[
+        {"role": "user", "content": "What's the weather in San Francisco?"}
+    ],
+    tools=tools,
+    tool_choice="auto"  # Let model decide when to use tools
+)
+
+message = response.choices[0].message
+print(f"Tool calls: {message.tool_calls}")
+```
+
+### 3. Execute Tool Calls
+
+```python
+import json
+import requests
+
+def execute_tool_call(tool_call):
+    function_name = tool_call.function.name
+    arguments = json.loads(tool_call.function.arguments)
+    
+    # Route to appropriate MCP server
+    if function_name == "query_database":
+        response = requests.post(
+            "http://localhost:3000/call-tool",
+            json={
+                "name": function_name,
+                "arguments": arguments
+            }
+        )
+        return response.json()
+    
+    elif function_name == "get_weather":
+        response = requests.post(
+            "http://localhost:3001/call-tool",
+            json={
+                "name": function_name,
+                "arguments": arguments
+            }
+        )
+        return response.json()
+
+# Execute all tool calls
+tool_results = []
+if message.tool_calls:
+    for tool_call in message.tool_calls:
+        result = execute_tool_call(tool_call)
+        tool_results.append({
+            "tool_call_id": tool_call.id,
+            "role": "tool",
+            "name": tool_call.function.name,
+            "content": json.dumps(result)
+        })
+```
+
+### 4. Continue Conversation
+
+```python
+# Add tool results to conversation
+messages = [
+    {"role": "user", "content": "What's the weather in San Francisco?"},
+    message,  # Assistant's response with tool calls
+    *tool_results  # Tool execution results
+]
+
+# Get final response
+final_response = client.chat.completions.create(
+    model="agent-model",
+    messages=messages
+)
+
+print(final_response.choices[0].message.content)
+# Output: "The current weather in San Francisco is 65°F and sunny."
+```
+
+## MCP Server Implementation
+
+### HTTP+SSE Server Example
+
+```python
+from flask import Flask, request, jsonify, Response
+import json
+import time
+
+app = Flask(__name__)
+
+tools = [
+    {
+        "name": "query_database",
+        "description": "Query the database using SQL",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sql": {"type": "string"}
+            },
+            "required": ["sql"]
+        }
+    },
+    {
+        "name": "search_documents",
+        "description": "Search documents using vector similarity",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5}
+            },
+            "required": ["query"]
+        }
+    }
+]
+
+@app.route('/tools', methods=['GET'])
+def list_tools():
+    return jsonify({"tools": tools})
+
+@app.route('/call-tool', methods=['POST'])
+def call_tool():
+    data = request.json
+    tool_name = data.get('name')
+    arguments = data.get('arguments', {})
+    
+    if tool_name == 'query_database':
+        sql = arguments.get('sql')
+        # Execute SQL query
+        result = execute_sql(sql)
+        return jsonify({
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(result)
+                }
+            ]
+        })
+    
+    elif tool_name == 'search_documents':
+        query = arguments.get('query')
+        limit = arguments.get('limit', 5)
+        # Execute vector search
+        results = search_docs(query, limit)
+        return jsonify({
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(results)
+                }
+            ]
+        })
+    
+    return jsonify({"error": "Unknown tool"}), 404
+
+@app.route('/events', methods=['GET'])
+def events():
+    """Server-Sent Events endpoint for real-time updates."""
+    def generate():
+        while True:
+            # Send keep-alive or updates
+            yield f"data: {{\"type\": \"ping\", \"timestamp\": {time.time()}}}\n\n"
+            time.sleep(30)
+    
+    return Response(generate(), mimetype='text/event-stream')
+
+def execute_sql(sql):
+    # Connect to Spice and execute SQL
+    import requests
+    response = requests.post(
+        "http://localhost:8090/v1/sql",
+        json={"sql": sql}
+    )
+    return response.json()
+
+def search_docs(query, limit):
+    # Execute vector search via Spice
+    import requests
+    response = requests.post(
+        "http://localhost:8090/v1/sql",
+        json={
+            "sql": f"SELECT * FROM vector_search(documents, '{query}', {limit})"
+        }
+    )
+    return response.json()
+
+if __name__ == '__main__':
+    app.run(port=3000)
+```
+
+## Tool Choice Control
+
+### Automatic (Default)
+
+Let the model decide when to use tools:
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[{"role": "user", "content": "What's in the database?"}],
+    tools=tools,
+    tool_choice="auto"
+)
+```
+
+### Required
+
+Force the model to use a tool:
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[{"role": "user", "content": "Query the database"}],
+    tools=tools,
+    tool_choice="required"  # Must call a tool
+)
+```
+
+### Specific Tool
+
+Force a specific tool:
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[{"role": "user", "content": "Get customer data"}],
+    tools=tools,
+    tool_choice={
+        "type": "function",
+        "function": {"name": "query_database"}
+    }
+)
+```
+
+### None
+
+Disable tool calling:
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[{"role": "user", "content": "Just chat, no tools"}],
+    tools=tools,
+    tool_choice="none"
+)
+```
+
+## Parallel Tool Calls
+
+Models can call multiple tools in parallel:
+
+```python
+response = client.chat.completions.create(
+    model="agent-model",
+    messages=[{
+        "role": "user",
+        "content": "Get weather for SF and query database for customers"
+    }],
+    tools=tools,
+    parallel_tool_calls=True  # Enable parallel execution
+)
+
+# Execute all tool calls in parallel
+import concurrent.futures
+
+with concurrent.futures.ThreadPoolExecutor() as executor:
+    futures = [
+        executor.submit(execute_tool_call, tc)
+        for tc in message.tool_calls
+    ]
+    tool_results = [f.result() for f in concurrent.futures.as_completed(futures)]
+```
+
+## Advanced Patterns
+
+### Agent Loop
+
+Implement a full agent loop with tool execution:
+
+```python
+class SpiceAgent:
+    def __init__(self, model, tools, max_iterations=5):
+        self.client = OpenAI(base_url="http://localhost:8090/v1")
+        self.model = model
+        self.tools = tools
+        self.max_iterations = max_iterations
+    
+    def run(self, user_message):
+        messages = [{"role": "user", "content": user_message}]
+        
+        for iteration in range(self.max_iterations):
+            # Get model response
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=self.tools,
+                tool_choice="auto"
+            )
+            
+            message = response.choices[0].message
+            messages.append(message)
+            
+            # Check if done (no tool calls)
+            if not message.tool_calls:
+                return message.content
+            
+            # Execute tool calls
+            for tool_call in message.tool_calls:
+                result = self.execute_tool(tool_call)
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": tool_call.function.name,
+                    "content": json.dumps(result)
+                })
+        
+        return "Maximum iterations reached"
+    
+    def execute_tool(self, tool_call):
+        # Tool execution logic
+        pass
+
+# Usage
+agent = SpiceAgent("agent-model", tools)
+answer = agent.run("Find customers who purchased in the last month")
+print(answer)
+```
+
+### Streaming with Tools
+
+```python
+stream = client.chat.completions.create(
+    model="agent-model",
+    messages=[{"role": "user", "content": "Query database"}],
+    tools=tools,
+    stream=True
+)
+
+tool_calls = []
+for chunk in stream:
+    delta = chunk.choices[0].delta
+    
+    # Collect tool calls
+    if delta.tool_calls:
+        for tc in delta.tool_calls:
+            if tc.index >= len(tool_calls):
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": ""}
+                })
+            tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
+    
+    # Stream content
+    if delta.content:
+        print(delta.content, end="")
+
+# Execute collected tool calls
+for tool_call in tool_calls:
+    result = execute_tool_call(tool_call)
+    print(f"Tool {tool_call['function']['name']}: {result}")
+```
+
+### Error Handling
+
+```python
+def safe_execute_tool(tool_call):
+    try:
+        function_name = tool_call.function.name
+        arguments = json.loads(tool_call.function.arguments)
+        
+        # Execute tool
+        result = execute_tool_call(tool_call)
+        
+        return {
+            "tool_call_id": tool_call.id,
+            "role": "tool",
+            "name": function_name,
+            "content": json.dumps(result)
+        }
+    
+    except Exception as e:
+        # Return error to model
+        return {
+            "tool_call_id": tool_call.id,
+            "role": "tool",
+            "name": function_name,
+            "content": json.dumps({
+                "error": str(e),
+                "message": "Tool execution failed"
+            })
+        }
+```
+
+## Database Tools Example
+
+Create tools for common database operations:
+
+```python
+db_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "query_database",
+            "description": "Execute a SQL query",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string"}
+                },
+                "required": ["sql"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_vectors",
+            "description": "Search documents using vector similarity",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "table": {"type": "string"},
+                    "limit": {"type": "integer", "default": 5}
+                },
+                "required": ["query", "table"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_table_schema",
+            "description": "Get schema for a table",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string"}
+                },
+                "required": ["table"]
+            }
+        }
+    }
+]
+```
+
+## MCP Proxy Trait
+
+Spice provides a Rust trait for implementing MCP proxies:
+
+```rust
+use async_trait::async_trait;
+use rmcp::{ServiceError, model::{CallToolResult, JsonObject}};
+
+#[async_trait]
+pub trait McpProxy: Send + Sync {
+    async fn call_tool(
+        &self,
+        arguments: Option<JsonObject>,
+    ) -> Result<CallToolResult, ServiceError>;
+}
+```
+
+This allows tools to proxy requests to external MCP servers.
+
+## Best Practices
+
+### 1. Tool Descriptions
+
+Write clear, detailed tool descriptions:
+
+```python
+{
+    "name": "query_database",
+    "description": """
+        Execute a SQL query against the database.
+        Use for retrieving customer data, orders, products, etc.
+        Returns results as JSON array.
+        Example: SELECT * FROM customers WHERE country = 'USA'
+    """,
+    "parameters": {...}
+}
+```
+
+### 2. Parameter Validation
+
+Validate tool parameters:
+
+```python
+def call_tool(data):
+    tool_name = data.get('name')
+    arguments = data.get('arguments', {})
+    
+    # Validate required parameters
+    if tool_name == 'query_database':
+        if 'sql' not in arguments:
+            return {"error": "Missing required parameter: sql"}, 400
+        
+        sql = arguments['sql']
+        
+        # Validate SQL (prevent injection)
+        if not is_safe_sql(sql):
+            return {"error": "Invalid SQL query"}, 400
+    
+    # Execute tool
+    ...
+```
+
+### 3. Rate Limiting
+
+Implement rate limiting for tool calls:
+
+```python
+from functools import wraps
+import time
+
+def rate_limit(max_calls=10, period=60):
+    calls = []
+    
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            now = time.time()
+            # Remove old calls
+            calls[:] = [c for c in calls if c > now - period]
+            
+            if len(calls) >= max_calls:
+                return {"error": "Rate limit exceeded"}, 429
+            
+            calls.append(now)
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+@app.route('/call-tool', methods=['POST'])
+@rate_limit(max_calls=100, period=60)
+def call_tool():
+    ...
+```
+
+### 4. Logging and Monitoring
+
+```python
+import logging
+
+def call_tool(data):
+    tool_name = data.get('name')
+    arguments = data.get('arguments', {})
+    
+    logging.info(f"Tool called: {tool_name}", extra={
+        "tool": tool_name,
+        "arguments": arguments
+    })
+    
+    start = time.time()
+    try:
+        result = execute_tool(tool_name, arguments)
+        duration = time.time() - start
+        
+        logging.info(f"Tool completed: {tool_name}", extra={
+            "tool": tool_name,
+            "duration_ms": duration * 1000,
+            "success": True
+        })
+        
+        return result
+    except Exception as e:
+        duration = time.time() - start
+        
+        logging.error(f"Tool failed: {tool_name}", extra={
+            "tool": tool_name,
+            "duration_ms": duration * 1000,
+            "success": False,
+            "error": str(e)
+        })
+        
+        raise
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="OpenAI Compatibility" icon="code" href="/ai/openai-compatibility">
+    Use MCP tools with OpenAI SDK
+  </Card>
+  <Card title="RAG" icon="magnifying-glass" href="/ai/rag">
+    Combine MCP with RAG workflows
+  </Card>
+  <Card title="Model Providers" icon="server" href="/ai/model-providers">
+    Configure LLM providers
+  </Card>
+  <Card title="SQL Reference" icon="database" href="/reference/sql">
+    Build database tools
+  </Card>
+</CardGroup>

@@ -1,0 +1,380 @@
+---
+title: 'Search API'
+description: 'Perform vector similarity and text search operations'
+---
+
+## Overview
+
+The Search API enables vector similarity search (VSS) and hybrid text search across datasets. It returns the most relevant matches based on cosine similarity with the input text, using embedding models configured in your runtime.
+
+## Search Endpoint
+
+```
+POST /v1/search
+```
+
+Perform a search operation on one or more datasets.
+
+### Request Headers
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`
+</ParamField>
+
+<ParamField header="Spice-Cache-Key" type="string">
+  Optional cache key for client-specific caching. When provided, responses will include `Vary: Spice-Cache-Key` header for CDN caching.
+</ParamField>
+
+### Request Body
+
+<ParamField body="datasets" type="array<string>" required>
+  List of dataset names to search. Datasets must have an embedding column and appropriate embedding model loaded.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  The search query text. This will be embedded and used for similarity matching.
+</ParamField>
+
+<ParamField body="where" type="string">
+  SQL WHERE clause to filter results (e.g., `user=1234321`, `created_at > '2024-01-01'`)
+</ParamField>
+
+<ParamField body="additional_columns" type="array<string>">
+  Additional columns to include in the response data (e.g., `["timestamp", "user_id"]`)
+</ParamField>
+
+<ParamField body="limit" type="integer" default={10}>
+  Maximum number of results to return. Must be greater than 0.
+</ParamField>
+
+<ParamField body="keywords" type="array<string>">
+  Keywords for hybrid search (combines vector similarity with keyword matching)
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "datasets": ["app_messages"],
+  "text": "Tokyo plane tickets",
+  "where": "user=1234321",
+  "additional_columns": ["timestamp"],
+  "limit": 3,
+  "keywords": ["plane", "tickets"]
+}
+```
+
+### Response
+
+<ResponseField name="results" type="array<object>">
+  Array of matching results sorted by relevance score (highest first).
+
+  <ResponseField name="matches" type="object">
+    Object containing matched column values (fields that triggered the match)
+  </ResponseField>
+
+  <ResponseField name="dataset" type="string">
+    Name of the dataset this result came from
+  </ResponseField>
+
+  <ResponseField name="primary_key" type="object">
+    Primary key values identifying this record
+  </ResponseField>
+
+  <ResponseField name="data" type="object">
+    Additional column data requested via `additional_columns`
+  </ResponseField>
+
+  <ResponseField name="_score" type="number">
+    Relevance score (0-1), where higher values indicate better matches. Based on cosine similarity.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="duration_ms" type="integer">
+  Total search execution time in milliseconds
+</ResponseField>
+
+### Response Headers
+
+<ResponseField name="Search-Results-Cache-Status" type="string">
+  Cache status for the search results:
+  - `hit` - Results served from cache
+  - `miss` - Results computed and cached
+  - `bypass` - Cache bypassed
+</ResponseField>
+
+<ResponseField name="Vary" type="string">
+  Set to `Spice-Cache-Key` when client cache key is provided, enabling CDN caching per user.
+</ResponseField>
+
+### Response Example
+
+```json
+{
+  "results": [
+    {
+      "matches": {
+        "message": "I booked use some tickets"
+      },
+      "dataset": "app_messages",
+      "primary_key": {
+        "id": "6fd5a215-0881-421d-ace0-b293b83452b5"
+      },
+      "data": {
+        "timestamp": 1724716542
+      },
+      "_score": 0.914321
+    },
+    {
+      "matches": {
+        "message": "direct to Narata"
+      },
+      "dataset": "app_messages",
+      "primary_key": {
+        "id": "8a25595f-99fb-4404-8c82-e1046d8f4c4b"
+      },
+      "data": {
+        "timestamp": 1724715881
+      },
+      "_score": 0.83221
+    },
+    {
+      "matches": {
+        "message": "Yes, we're sitting together"
+      },
+      "dataset": "app_messages",
+      "primary_key": {
+        "id": "8421ed84-b86d-4b10-b4da-7a432e8912c0"
+      },
+      "data": {
+        "timestamp": 1724716123
+      },
+      "_score": 0.787654321
+    }
+  ],
+  "duration_ms": 42
+}
+```
+
+### Status Codes
+
+- **200 OK** - Search completed successfully
+- **400 Bad Request** - Invalid request parameters or dataset not configured for search
+- **500 Internal Server Error** - Unexpected error during search
+
+### Error Responses
+
+#### No Datasets Provided (400)
+
+```json
+{
+  "error": "No data sources provided"
+}
+```
+
+#### Invalid Limit (400)
+
+```json
+{
+  "error": "Limit must be greater than 0"
+}
+```
+
+#### Dataset Not Configured for Search (400)
+
+```json
+{
+  "error": "Dataset 'my_dataset' does not have embeddings configured for vector search"
+}
+```
+
+#### Internal Server Error (500)
+
+```json
+{
+  "error": "Unexpected internal server error occurred"
+}
+```
+
+## Examples
+
+### Basic Vector Search
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["documents"],
+    "text": "machine learning tutorial",
+    "limit": 5
+  }'
+```
+
+### Search with Filters
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["support_tickets"],
+    "text": "billing issue",
+    "where": "status = '"'"'open'"'"' AND created_at > '"'"'2024-01-01'"'"'",
+    "limit": 10
+  }'
+```
+
+### Hybrid Search with Keywords
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["product_reviews"],
+    "text": "comfortable running shoes",
+    "keywords": ["comfortable", "running", "shoes"],
+    "limit": 20
+  }'
+```
+
+### Search with Additional Columns
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["articles"],
+    "text": "climate change impacts",
+    "additional_columns": ["author", "published_date", "category"],
+    "limit": 10
+  }'
+```
+
+### Multi-Dataset Search
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["emails", "slack_messages", "documents"],
+    "text": "Q4 planning",
+    "limit": 15
+  }'
+```
+
+### Search with Cache Key
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -H "Spice-Cache-Key: user-12345" \
+  -d '{
+    "datasets": ["user_content"],
+    "text": "my saved items",
+    "where": "user_id = 12345",
+    "limit": 10
+  }'
+```
+
+## Use Cases
+
+### Semantic Document Search
+
+Search through large document collections using natural language queries:
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["knowledge_base"],
+    "text": "How to configure OAuth authentication?",
+    "limit": 5
+  }'
+```
+
+### Customer Support Ticket Search
+
+Find similar support tickets to route or resolve issues faster:
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["support_tickets"],
+    "text": "Cannot access my account after password reset",
+    "where": "status = '"'"'resolved'"'"'",
+    "additional_columns": ["resolution", "resolved_by", "resolved_at"],
+    "limit": 3
+  }'
+```
+
+### E-commerce Product Search
+
+Find products using natural language descriptions:
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["products"],
+    "text": "waterproof hiking backpack with laptop compartment",
+    "keywords": ["waterproof", "hiking", "backpack", "laptop"],
+    "additional_columns": ["price", "brand", "rating"],
+    "limit": 10
+  }'
+```
+
+### RAG (Retrieval Augmented Generation)
+
+Retrieve relevant context for LLM prompts:
+
+```bash
+# Search for context
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "datasets": ["company_docs"],
+    "text": "What is our return policy?",
+    "limit": 3
+  }' | jq -r '.results[].matches.content'
+
+# Use retrieved context in LLM prompt
+```
+
+## Prerequisites
+
+Before using the Search API:
+
+1. **Configure embedding columns** in your datasets
+2. **Load embedding models** (e.g., `text-embedding-ada-002`, `all-MiniLM-L6-v2`)
+3. **Enable acceleration** for better search performance (recommended)
+
+Example spicepod configuration:
+
+```yaml
+datasets:
+  - from: postgres:public.documents
+    name: documents
+    acceleration:
+      enabled: true
+    embeddings:
+      - column: content
+        model: text-embedding-ada-002
+
+models:
+  - from: openai:text-embedding-ada-002
+    name: text-embedding-ada-002
+```
+
+## Performance Considerations
+
+- **Acceleration**: Enable dataset acceleration for significantly faster search
+- **Limit**: Use appropriate limits to balance relevance vs. response time
+- **Caching**: Leverage cache keys for frequently repeated searches
+- **Filters**: Use `where` clauses to reduce search space
+- **Batch Processing**: For multiple searches, consider parallel requests
+
+## Related APIs
+
+- [HTTP Query API](/api/http-query) - Execute SQL queries on search results
+- [Models API](/api/models) - List available embedding models
+- [Datasets API](/api/datasets) - View dataset configuration and status

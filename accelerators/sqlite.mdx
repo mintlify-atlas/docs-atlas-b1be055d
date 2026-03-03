@@ -1,0 +1,346 @@
+---
+title: 'SQLite Accelerator'
+description: 'Embedded transactional database acceleration with SQLite'
+---
+
+The SQLite accelerator provides lightweight, embedded transactional database acceleration. It's optimized for OLTP workloads with frequent inserts, updates, deletes, and row-based point queries.
+
+## When to Use SQLite
+
+- **Transactional workloads**: Frequent updates and deletes
+- **Point queries**: Row-based lookups by primary key
+- **ACID guarantees**: Strong consistency required
+- **Lightweight**: Minimal resource overhead
+- **File-based**: Need persistence without external database
+
+## Configuration
+
+### Memory Mode
+
+Data stored in RAM (volatile):
+
+```yaml
+datasets:
+  - name: user_sessions
+    from: postgres://db/sessions
+    acceleration:
+      enabled: true
+      engine: sqlite
+      mode: memory
+```
+
+### File Mode
+
+Data persisted to disk:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  mode: file
+  params:
+    sqlite_file: /data/my_dataset.db
+```
+
+### Default File Location
+
+If `sqlite_file` not specified, uses `{spice_data_dir}/accelerated_sqlite.db`:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  mode: file
+```
+
+### File Create Mode
+
+Deletes existing file on startup:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  mode: file_create
+  params:
+    sqlite_file: /data/fresh_dataset.db
+```
+
+## Refresh Modes
+
+### Full Refresh
+
+Replaces all data:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  refresh_mode: full
+  refresh_interval: 10m
+```
+
+### Append Mode
+
+Appends only new data:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  refresh_mode: append
+  refresh_interval: 1m
+  time_column: updated_at
+```
+
+## Snapshots
+
+Bootstrap from S3 snapshots for fast cold starts:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  mode: file
+  snapshot:
+    enabled: true
+    source: s3://my-bucket/snapshots/my_dataset/
+    refresh: true
+```
+
+## Busy Timeout
+
+Configure timeout for locked database:
+
+```yaml
+params:
+  busy_timeout: 10000  # 10 seconds (milliseconds)
+```
+
+Default: 5000ms (5 seconds). Increase for high-concurrency workloads.
+
+## Primary Keys and Constraints
+
+### Primary Key
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  primary_key: id
+```
+
+### Composite Primary Key
+
+```yaml
+primary_key:
+  - user_id
+  - session_id
+```
+
+### On Conflict Behavior
+
+```yaml
+acceleration:
+  enabled: true
+  engine: sqlite
+  primary_key: id
+  on_conflict: upsert
+```
+
+## Federation
+
+SQLite accelerators can federate queries across multiple file-mode SQLite databases. Spice automatically attaches other SQLite databases.
+
+```yaml
+datasets:
+  - name: orders
+    acceleration:
+      engine: sqlite
+      mode: file
+      params:
+        sqlite_file: /data/orders.db
+  
+  - name: customers
+    acceleration:
+      engine: sqlite
+      mode: file
+      params:
+        sqlite_file: /data/customers.db
+```
+
+Query across both:
+
+```sql
+SELECT o.order_id, c.customer_name
+FROM orders o
+JOIN customers c ON o.customer_id = c.id;
+```
+
+## File Extensions
+
+SQLite supports multiple file extensions:
+
+- `.db`
+- `.sqlite`
+
+## Decimal Support
+
+SQLite accelerator includes the decimal extension for precise decimal arithmetic:
+
+```sql
+SELECT decimal('123.45') + decimal('67.89') as total;
+```
+
+Automatically loaded on initialization.
+
+## Performance Characteristics
+
+### Query Performance
+
+| Operation       | Performance | Notes                          |
+|-----------------|-------------|--------------------------------|
+| Point queries   | Excellent   | Row-based storage, indexes     |
+| Inserts         | Excellent   | Fast single-row inserts        |
+| Updates         | Excellent   | In-place updates               |
+| Deletes         | Excellent   | Fast row removal               |
+| Full table scan | Fair        | Row-based (not columnar)       |
+| Aggregations    | Fair        | Not optimized for analytics    |
+| Joins           | Good        | Small to medium joins          |
+
+### Storage
+
+| Feature        | Details                           |
+|----------------|-----------------------------------|
+| Format         | Row-based (B-tree)                |
+| Compression    | None (compact format)             |
+| Max file size  | ~140TB (theoretical), &lt;10GB ideal |
+| ACID           | Full ACID compliance              |
+
+## Transactions
+
+SQLite provides full ACID transactions:
+
+```sql
+BEGIN TRANSACTION;
+  INSERT INTO orders (id, customer_id, amount) VALUES (1, 100, 50.00);
+  UPDATE customers SET total_orders = total_orders + 1 WHERE id = 100;
+COMMIT;
+```
+
+## Write-Ahead Logging (WAL)
+
+SQLite uses WAL mode for better concurrency:
+
+- Multiple readers don't block writers
+- Better performance for concurrent access
+- Automatic checkpointing
+
+## Example Configurations
+
+### User Session Store
+
+```yaml
+datasets:
+  - name: sessions
+    from: redis://localhost:6379/sessions
+    acceleration:
+      enabled: true
+      engine: sqlite
+      mode: memory
+      refresh_interval: 30s
+      primary_key: session_id
+```
+
+### Transactional Cache
+
+```yaml
+datasets:
+  - name: inventory
+    from: mysql://db/inventory
+    acceleration:
+      enabled: true
+      engine: sqlite
+      mode: file
+      params:
+        sqlite_file: /data/inventory.db
+        busy_timeout: 10000
+      primary_key: product_id
+      on_conflict: upsert
+      refresh_interval: 1m
+```
+
+### Persistent Lookup Table
+
+```yaml
+datasets:
+  - name: product_catalog
+    from: postgres://db/products
+    acceleration:
+      enabled: true
+      engine: sqlite
+      mode: file
+      params:
+        sqlite_file: /data/products.db
+      snapshot:
+        enabled: true
+        source: s3://snapshots/products/
+      refresh_interval: 1h
+```
+
+## Monitoring
+
+```sql
+-- File size
+SELECT 
+  dataset_name,
+  file_size_bytes / 1024 / 1024 as size_mb
+FROM runtime.metrics
+WHERE name = 'acceleration_file_size';
+
+-- Row count
+SELECT 
+  dataset_name,
+  value as row_count
+FROM runtime.metrics
+WHERE name = 'acceleration_rows';
+```
+
+## Parameters
+
+| Parameter    | Type    | Description                              | Default |
+|--------------|---------|------------------------------------------|---------|
+| sqlite_file  | string  | Path to SQLite database file             | auto    |
+| busy_timeout | integer | Timeout in milliseconds for locked DB    | 5000    |
+
+## Limitations
+
+- Row-based storage (not ideal for analytics)
+- Single-file database
+- No built-in partitioning
+- Limited to ~10GB for best performance
+- Write concurrency limited (single writer at a time)
+
+## When to Use DuckDB Instead
+
+Consider DuckDB if:
+
+- Analytical queries with aggregations
+- Dataset > 10GB
+- Need columnar compression
+- Read-heavy workload
+
+## When to Use PostgreSQL Instead
+
+Consider PostgreSQL if:
+
+- Need advanced database features (triggers, stored procedures)
+- Multi-user concurrent writes
+- Dataset > 100GB
+- Need replication
+
+## Next Steps
+
+- [DuckDB Accelerator](/accelerators/duckdb) - For analytical workloads
+- [PostgreSQL Accelerator](/accelerators/postgres) - For full-featured database
+- [Acceleration Overview](/accelerators/overview) - Compare all accelerators

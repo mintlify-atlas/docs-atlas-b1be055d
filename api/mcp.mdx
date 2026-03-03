@@ -1,0 +1,708 @@
+---
+title: "Model Context Protocol (MCP) API"
+description: "Integrate external tools with AI agents using MCP over HTTP+SSE"
+---
+
+Spice provides a **Model Context Protocol (MCP) HTTP+SSE API** that enables AI agents and LLMs to interact with external tools and services. This allows you to extend AI capabilities with custom functions, data access, and integrations.
+
+## Overview
+
+The MCP API enables:
+
+- **Tool calling** from LLMs using the Model Context Protocol standard
+- **HTTP+SSE transport** for real-time bidirectional communication
+- **External tool integration** via MCP servers (stdio or HTTP)
+- **Built-in Spice tools** exposed through MCP (SQL queries, search, data sampling)
+- **Pass-through proxy** for external MCP servers
+
+<Note>
+The MCP API is available at `/v1/mcp/sse` and follows the [Model Context Protocol specification](https://spec.modelcontextprotocol.io/).
+</Note>
+
+## What is MCP?
+
+Model Context Protocol (MCP) is an open standard for connecting AI agents to external tools and data sources. It provides:
+
+- **Standardized tool definitions** with JSON Schema parameters
+- **Bidirectional communication** between clients and servers
+- **Multiple transports** (stdio, HTTP+SSE)
+- **Security and validation** for tool inputs
+
+Spice implements MCP as both a **server** (exposing tools to AI agents) and a **client** (connecting to external MCP servers).
+
+## Architecture
+
+```
+┌─────────────────┐
+│   AI Agent      │
+│   (Claude,      │
+│    GPT, etc.)   │
+└────────┬────────┘
+         │ MCP over HTTP+SSE
+         ▼
+┌─────────────────────────────┐
+│   Spice Runtime             │
+│  ┌─────────────────────┐    │
+│  │  MCP Server         │    │
+│  │  (/v1/mcp/sse)      │    │
+│  └──────────┬──────────┘    │
+│             │                │
+│  ┌──────────▼──────────┐    │
+│  │  Built-in Tools     │    │
+│  │  - SQL Query        │    │
+│  │  - Vector Search    │    │
+│  │  - Data Sampling    │    │
+│  └─────────────────────┘    │
+│                              │
+│  ┌─────────────────────┐    │
+│  │  MCP Proxy          │    │
+│  │  (External Tools)   │    │
+│  └──────────┬──────────┘    │
+└─────────────┼───────────────┘
+              │ MCP (stdio/HTTP)
+              ▼
+      ┌───────────────┐
+      │ External MCP  │
+      │ Servers       │
+      └───────────────┘
+```
+
+## Establishing a Connection
+
+### SSE Connection Flow
+
+1. **Client initiates SSE connection**: `GET /v1/mcp/sse`
+2. **Server returns session ID** in the SSE stream
+3. **Client sends messages**: `POST /v1/mcp/sse?sessionId={id}`
+4. **Server streams responses** via the SSE connection
+
+### Example Connection
+
+```javascript
+// 1. Establish SSE connection
+const eventSource = new EventSource('http://localhost:8090/v1/mcp/sse');
+let sessionId = null;
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  
+  // Extract session ID from first message
+  if (!sessionId && data.sessionId) {
+    sessionId = data.sessionId;
+    initializeMcp();
+  }
+  
+  // Handle MCP responses
+  console.log('MCP Response:', data);
+};
+
+// 2. Send MCP messages
+async function sendMcpMessage(message) {
+  await fetch(`http://localhost:8090/v1/mcp/sse?sessionId=${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message)
+  });
+}
+
+// 3. Initialize MCP connection
+async function initializeMcp() {
+  await sendMcpMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'my-client',
+        version: '1.0.0'
+      }
+    }
+  });
+}
+```
+
+## API Endpoints
+
+### Establish SSE Connection
+
+```http
+GET /v1/mcp/sse
+```
+
+Initiates a Server-Sent Events (SSE) connection for MCP communication.
+
+**Response Headers:**
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+```
+
+**Example:**
+```bash
+curl -N http://localhost:8090/v1/mcp/sse
+```
+
+### Send MCP Message
+
+```http
+POST /v1/mcp/sse?sessionId={sessionId}
+```
+
+Sends an MCP message to the server. Responses stream via the SSE connection.
+
+**Query Parameters:**
+- `sessionId` (required): Session ID from the SSE connection
+
+**Request Body:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+**Response Codes:**
+- `202 Accepted`: Message accepted, response will stream via SSE
+- `404 Not Found`: Session not found or expired
+
+## MCP Protocol Messages
+
+### Initialize Connection
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "client-name",
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "Spice.ai Open Source",
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+### List Available Tools
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "sql",
+        "description": "Execute SQL queries against Spice datasets",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "SQL query to execute"
+            }
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "search",
+        "description": "Perform vector similarity search",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query text"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum results to return"
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    ]
+  }
+}
+```
+
+### Call a Tool
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "sql",
+    "arguments": {
+      "query": "SELECT * FROM users LIMIT 10"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]"
+      }
+    ],
+    "isError": false
+  }
+}
+```
+
+## Built-in Spice Tools
+
+Spice exposes several built-in tools through MCP:
+
+### SQL Query Tool
+
+```json
+{
+  "name": "sql",
+  "description": "Execute SQL queries against Spice datasets",
+  "arguments": {
+    "query": "SELECT COUNT(*) FROM orders WHERE status = 'completed'"
+  }
+}
+```
+
+### Vector Search Tool
+
+```json
+{
+  "name": "search",
+  "description": "Perform vector similarity search",
+  "arguments": {
+    "query": "machine learning tutorials",
+    "dataset": "documents",
+    "limit": 5
+  }
+}
+```
+
+### Data Sampling Tool
+
+```json
+{
+  "name": "sample",
+  "description": "Get sample rows from a dataset",
+  "arguments": {
+    "dataset": "users",
+    "limit": 10,
+    "method": "random"
+  }
+}
+```
+
+### Table Schema Tool
+
+```json
+{
+  "name": "table_schema",
+  "description": "Get schema information for a dataset",
+  "arguments": {
+    "dataset": "orders"
+  }
+}
+```
+
+## Integrating External MCP Servers
+
+Spice can connect to external MCP servers and expose their tools through the Spice MCP API.
+
+### Configuration
+
+Define external MCP tools in your `spicepod.yaml`:
+
+```yaml spicepod.yaml
+version: v1beta1
+kind: Spicepod
+name: my-app
+
+tools:
+  # Connect via HTTP+SSE
+  - name: external_api
+    from: mcp:http://external-mcp-server:8080/v1/mcp/sse
+
+  # Connect via stdio
+  - name: local_tool
+    from: mcp:/usr/local/bin/my-mcp-server
+    params:
+      mcp_args: "--config /etc/config.json"
+    env:
+      API_KEY: ${secrets:my_api_key}
+```
+
+### HTTP+SSE Transport
+
+Connect to external MCP servers over HTTP:
+
+```yaml spicepod.yaml
+tools:
+  - name: github_tools
+    from: mcp:https://mcp.github.com/v1/mcp/sse
+    params:
+      auth_token: ${secrets:github_token}
+```
+
+### Stdio Transport
+
+Connect to local MCP servers via stdio:
+
+```yaml spicepod.yaml
+tools:
+  - name: filesystem_tools
+    from: mcp:/usr/local/bin/mcp-filesystem
+    params:
+      mcp_args: "--allowed-dirs /data /tmp"
+    env:
+      HOME: /home/user
+      LOG_LEVEL: debug
+```
+
+### MCP Pass-through Proxy
+
+When calling external MCP tools through Spice, the request is proxied directly to the external server:
+
+```javascript
+// Client calls Spice MCP API
+await sendMcpMessage({
+  jsonrpc: '2.0',
+  id: 5,
+  method: 'tools/call',
+  params: {
+    name: 'github_tools/create_issue',  // External tool
+    arguments: {
+      repo: 'spiceai/spiceai',
+      title: 'Bug report',
+      body: 'Description of bug'
+    }
+  }
+});
+
+// Spice proxies to external MCP server
+// Response streams back through SSE
+```
+
+## Authentication
+
+### API Key Authentication
+
+Include your Spice API key in requests:
+
+```javascript
+const eventSource = new EventSource(
+  'http://localhost:8090/v1/mcp/sse',
+  {
+    headers: {
+      'Authorization': 'Bearer YOUR_API_KEY'
+    }
+  }
+);
+```
+
+### Configure Authentication
+
+```yaml spicepod.yaml
+runtime:
+  auth:
+    enabled: true
+    keys:
+      - key: ${MY_API_KEY}
+```
+
+## Security
+
+Spice implements several security measures for MCP:
+
+### Input Validation
+
+- **Tool name length**: Maximum 256 characters
+- **Tool name characters**: Alphanumeric, `_`, `-`, `.`, `/` only
+- **Arguments size**: Maximum 1 MB
+- **JSON nesting depth**: Maximum 32 levels
+
+### Rate Limiting
+
+Configure rate limits in your `spicepod.yaml`:
+
+```yaml spicepod.yaml
+runtime:
+  http:
+    rate_limit:
+      enabled: true
+      requests_per_second: 100
+```
+
+### External Tool Isolation
+
+External MCP servers run in isolated processes with:
+
+- **Environment variable sandboxing**
+- **Filesystem access controls** (for stdio transport)
+- **Network isolation** (configurable)
+
+## Integration Examples
+
+### Claude Desktop
+
+Configure Claude Desktop to use Spice as an MCP server:
+
+```json claude_desktop_config.json
+{
+  "mcpServers": {
+    "spice": {
+      "command": "curl",
+      "args": ["-N", "http://localhost:8090/v1/mcp/sse"],
+      "env": {
+        "SPICE_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+### OpenAI Custom GPTs
+
+Expose Spice tools to OpenAI:
+
+```python
+import json
+import requests
+from typing import Any, Dict
+
+class SpiceMCPClient:
+    def __init__(self, base_url: str, api_key: str):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.session_id = None
+        
+    def connect(self):
+        # Establish SSE connection
+        response = requests.get(
+            f"{self.base_url}/v1/mcp/sse",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            stream=True
+        )
+        
+        for line in response.iter_lines():
+            if line:
+                data = json.loads(line.decode('utf-8'))
+                if 'sessionId' in data:
+                    self.session_id = data['sessionId']
+                    break
+                    
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any]):
+        message = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        
+        response = requests.post(
+            f"{self.base_url}/v1/mcp/sse?sessionId={self.session_id}",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            },
+            json=message
+        )
+        
+        return response.json()
+
+# Usage
+client = SpiceMCPClient("http://localhost:8090", "your-api-key")
+client.connect()
+
+result = client.call_tool("sql", {
+    "query": "SELECT * FROM users LIMIT 5"
+})
+print(result)
+```
+
+### LangChain Integration
+
+```python
+from langchain.tools import Tool
+from langchain.agents import initialize_agent, AgentType
+from langchain_openai import ChatOpenAI
+
+class SpiceSQLTool(Tool):
+    name = "spice_sql"
+    description = "Execute SQL queries against Spice datasets"
+    
+    def __init__(self, mcp_client):
+        self.mcp_client = mcp_client
+        
+    def _run(self, query: str) -> str:
+        result = self.mcp_client.call_tool("sql", {"query": query})
+        return result["content"][0]["text"]
+
+# Initialize agent with Spice tools
+spice_client = SpiceMCPClient("http://localhost:8090", "your-api-key")
+spice_client.connect()
+
+tools = [
+    SpiceSQLTool(spice_client)
+]
+
+llm = ChatOpenAI(model="gpt-4")
+agent = initialize_agent(
+    tools,
+    llm,
+    agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+    verbose=True
+)
+
+agent.run("How many active users do we have?")
+```
+
+## Error Handling
+
+### Tool Not Found
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "error": {
+    "code": -32601,
+    "message": "Method not found"
+  }
+}
+```
+
+### Invalid Parameters
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "error": {
+    "code": -32602,
+    "message": "Invalid params: Tool name contains invalid characters"
+  }
+}
+```
+
+### Tool Execution Error
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "error": {
+    "code": -32603,
+    "message": "Internal error: Query execution failed"
+  }
+}
+```
+
+## Performance Considerations
+
+### Connection Pooling
+
+Spice maintains persistent connections to external MCP servers:
+
+- **HTTP+SSE**: Connection reuse with keep-alive
+- **Stdio**: Process pooling for multiple tool calls
+
+### Timeouts
+
+Configure timeouts in your `spicepod.yaml`:
+
+```yaml spicepod.yaml
+tools:
+  - name: slow_tool
+    from: mcp:http://external-server/mcp/sse
+    params:
+      timeout: 30s
+```
+
+### Message Size Limits
+
+- **Request size**: 1 MB maximum
+- **Response size**: No hard limit, streams via SSE
+- **JSON depth**: 32 levels maximum
+
+## Debugging
+
+Enable MCP debug logging:
+
+```yaml spicepod.yaml
+runtime:
+  log_level: debug
+```
+
+View MCP message traffic:
+```bash
+spice run --log-level debug | grep "mcp"
+```
+
+## Limitations
+
+- **No sampling/pagination**: Large tool responses may cause memory issues
+- **Stdio process limits**: Maximum 100 concurrent stdio MCP server processes
+- **Session timeout**: SSE sessions expire after 1 hour of inactivity
+
+## Related APIs
+
+- [OpenAI-Compatible API](/api/http/chat) - Use MCP tools with LLMs
+- [SQL Query API](/api/http/query) - Execute SQL queries
+- [Vector Search](/features/search) - Semantic search capabilities
+
+## Learn More
+
+- [Model Context Protocol Specification](https://spec.modelcontextprotocol.io/)
+- [Spice MCP Tutorial Video](https://www.youtube.com/watch?v=TFAu4qxjTPk)
+- [MCP Tools Documentation](https://spiceai.org/docs/components/tools)

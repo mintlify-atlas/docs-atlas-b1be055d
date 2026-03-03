@@ -1,0 +1,116 @@
+---
+title: 'Spice.ai - SQL Query, Search, and LLM-Inference Engine'
+description: 'A portable accelerated SQL query, search, and LLM-inference engine for data-grounded AI apps and agents'
+---
+
+<img src="https://github.com/user-attachments/assets/9db94f9c-10a1-47b0-ab45-05aa964590ff" alt="Spice.ai Open Source accelerated data query and LLM-inference engine" />
+
+## What is Spice?
+
+**Spice** is a SQL query, search, and LLM-inference engine, written in Rust, for data apps and agents.
+
+Spice simplifies building data-driven AI applications and agents by making it fast and easy to query, federate, and accelerate data from one or more sources using SQL, while grounding AI in real-time, reliable data. Co-locate datasets with apps and AI models to power AI feedback loops, enable RAG and search, and deliver fast, low-latency data-query and AI-inference with full control over cost and performance.
+
+## Four Industry Standard APIs
+
+Spice provides four industry standard APIs in a lightweight, portable runtime (single binary/container):
+
+<CardGroup cols={2}>
+  <Card title="SQL Query & Search" icon="database">
+    HTTP, Arrow Flight, Arrow Flight SQL, ODBC, JDBC, and ADBC APIs with `vector_search` and `text_search` UDTFs for hybrid search.
+  </Card>
+  
+  <Card title="OpenAI-Compatible APIs" icon="brain">
+    HTTP APIs for OpenAI SDK compatibility, local model serving (CUDA/Metal accelerated), and hosted model gateway.
+  </Card>
+  
+  <Card title="Iceberg Catalog REST APIs" icon="cube">
+    A unified Iceberg REST Catalog API for data lake integration and Iceberg table writes.
+  </Card>
+  
+  <Card title="MCP HTTP+SSE APIs" icon="plug">
+    Integration with external tools via Model Context Protocol (MCP) using HTTP and Server-Sent Events (SSE).
+  </Card>
+</CardGroup>
+
+## Primary Features
+
+<CardGroup cols={2}>
+  <Card title="Data Federation" icon="project-diagram" href="/features/query-federation">
+    SQL query across any database, data warehouse, or data lake. Scale from single-node to distributed multi-node query execution.
+  </Card>
+  
+  <Card title="Data Materialization & Acceleration" icon="rocket">
+    Materialize, accelerate, and cache database queries with Arrow, DuckDB, SQLite, PostgreSQL, or Spice Cayenne (Vortex).
+  </Card>
+  
+  <Card title="Enterprise Search" icon="search">
+    Keyword, vector, and full-text search with Tantivy-powered BM25 and petabyte-scale vector similarity search via Amazon S3 Vectors or pgvector.
+  </Card>
+  
+  <Card title="AI Apps and Agents" icon="robot" href="/use-cases/rag">
+    An AI-database powering retrieval-augmented generation (RAG) and intelligent agents with OpenAI-compatible APIs and MCP integration.
+  </Card>
+</CardGroup>
+
+## Why Spice?
+
+<img width="800" alt="Spice.ai" src="https://github.com/spiceai/spiceai/assets/80174/29e4421d-8942-4f2a-8397-e9d4fdeda36b" />
+
+Spice is built-on industry leading technologies including [Apache DataFusion](https://datafusion.apache.org), Apache Arrow, Arrow Flight, SQLite, and DuckDB.
+
+### Latest Capabilities
+
+- **Spice Cayenne Data Accelerator**: Simplified multi-file acceleration using the [Vortex columnar format](https://github.com/vortex-data/vortex) + SQLite metadata. Delivers DuckDB-comparable performance without single-file scaling limitations.
+- **Multi-Node Distributed Query**: Scale query execution across multiple nodes with Apache Ballista integration for improved performance on large datasets.
+- **Acceleration Snapshots**: Bootstrap accelerations from S3 for fast cold starts (seconds vs. minutes). Supports ephemeral storage with persistent recovery.
+- **Iceberg Table Writes**: Write to Iceberg tables using standard SQL `INSERT INTO` for data ingestion and transformation—no Spark required.
+- **Petabyte-Scale Vector Search**: Native Amazon S3 Vectors integration manages the full vector lifecycle from ingestion to embedding to querying. SQL-integrated hybrid search with RRF.
+
+### How is Spice different?
+
+1. **AI-Native Runtime**: Spice combines data query and AI inference in a single engine, for data-grounded AI and accurate AI.
+
+2. **Application-Focused**: Designed to run distributed at the application and agent level, often as a 1:1 or 1:N mapping between app and Spice instance, unlike traditional data systems built for many apps on one centralized database. It's common to spin up multiple Spice instances—even one per tenant or customer.
+
+3. **Dual-Engine Acceleration**: Supports both **OLAP** (Arrow/DuckDB) and **OLTP** (SQLite/PostgreSQL) engines at the dataset level, providing flexible performance across analytical and transactional workloads.
+
+4. **Disaggregated Storage**: Separation of compute from disaggregated storage, co-locating local, materialized working sets of data with applications, dashboards, or ML pipelines while accessing source data in its original storage.
+
+5. **Edge to Cloud Native**: Deploy as a standalone instance, Kubernetes sidecar, microservice, or cluster—across edge/POP, on-prem, and public clouds. Chain multiple Spice instances for tier-optimized, distributed deployments.
+
+## Get Started
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get up and running with Spice in minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Install Spice on your platform
+  </Card>
+  
+  <Card title="Cookbook" icon="book" href="https://github.com/spiceai/cookbook">
+    Explore examples and recipes
+  </Card>
+</CardGroup>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Documentation" icon="file-text" href="https://spiceai.org/docs">
+    Comprehensive documentation for all features
+  </Card>
+  
+  <Card title="1.0 Stable Announcement" icon="newspaper" href="https://spiceai.org/blog/announcing-1.0-stable">
+    Read the Spice.ai 1.0-stable announcement
+  </Card>
+  
+  <Card title="CMU Database Talk" icon="video" href="https://www.youtube.com/watch?v=tyM-ec1lKfU">
+    Watch the CMU Databases talk on Spice.ai
+  </Card>
+  
+  <Card title="GitHub" icon="github" href="https://github.com/spiceai/spiceai">
+    Star us on GitHub
+  </Card>
+</CardGroup>

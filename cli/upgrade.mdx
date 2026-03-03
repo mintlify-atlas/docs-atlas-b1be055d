@@ -1,0 +1,358 @@
+---
+title: 'spice upgrade'
+description: 'Upgrade Spice CLI and runtime to latest version'
+---
+
+The `spice upgrade` command upgrades both the Spice CLI and runtime to the latest or a specified version.
+
+## Usage
+
+```bash
+spice upgrade [VERSION] [OPTIONS]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `VERSION` | Target version (e.g., `v1.8.3`). Omit for latest. |
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-f, --force` | Force upgrade even if already at target version |
+
+## Behavior
+
+### Version Check
+
+The command:
+1. Checks current CLI version
+2. Checks current runtime version (if installed)
+3. Fetches target version from GitHub releases
+4. Upgrades if newer version available
+
+### Upgrade Process
+
+1. **CLI Upgrade:** Replaces CLI binary in-place
+2. **Runtime Upgrade:** Downloads new `spiced` to `~/.spice/bin/`
+3. **Version File:** Updates `~/.spice/runtime_version.txt`
+
+### In-Place CLI Upgrade
+
+The CLI executable is replaced while running:
+
+- Uses temporary file for safe replacement
+- Preserves file permissions
+- Works on Unix and Windows
+
+## Examples
+
+### Upgrade to Latest
+
+```bash
+spice upgrade
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.7.0
+Current CLI version: v1.7.0
+Current runtime version: v1.7.0
+Checking for latest Spice release...
+Upgrading Spice CLI to v1.8.3 (spice-darwin-arm64.tar.gz)...
+Spice CLI upgraded to v1.8.3 successfully.
+Upgrading Spice runtime to v1.8.3...
+Spice runtime upgraded to v1.8.3 successfully.
+```
+
+### Upgrade to Specific Version
+
+```bash
+spice upgrade v1.8.0
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.9.0
+Current CLI version: v1.9.0
+Current runtime version: v1.9.0
+Checking for Spice release v1.8.0...
+Upgrading Spice CLI to v1.8.0 (spice-darwin-arm64.tar.gz)...
+Spice CLI upgraded to v1.8.0 successfully.
+Upgrading Spice runtime to v1.8.0...
+Spice runtime upgraded to v1.8.0 successfully.
+```
+
+### Already Up to Date
+
+```bash
+spice upgrade
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.8.3
+Current CLI version: v1.8.3
+Current runtime version: v1.8.3
+Checking for latest Spice release...
+Already using version v1.8.3. CLI and runtime upgrade not required.
+```
+
+### Force Upgrade
+
+Reinstall current version:
+
+```bash
+spice upgrade --force
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.8.3
+Current CLI version: v1.8.3
+Current runtime version: v1.8.3
+Checking for latest Spice release...
+Upgrading Spice CLI to v1.8.3 (spice-darwin-arm64.tar.gz)...
+Spice CLI upgraded to v1.8.3 successfully.
+Upgrading Spice runtime to v1.8.3...
+Spice runtime upgraded to v1.8.3 successfully.
+```
+
+### CLI-Only Upgrade
+
+If runtime is already up to date:
+
+```bash
+spice upgrade
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.7.0
+Current CLI version: v1.7.0
+Current runtime version: v1.8.3
+Checking for latest Spice release...
+Upgrading Spice CLI to v1.8.3 (spice-darwin-arm64.tar.gz)...
+Spice CLI upgraded to v1.8.3 successfully.
+Runtime is already at v1.8.3.
+```
+
+### Runtime-Only Upgrade
+
+If CLI is already up to date:
+
+```bash
+spice upgrade
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.8.3
+Current CLI version: v1.8.3
+Current runtime version: v1.7.0
+Checking for latest Spice release...
+CLI is already at v1.8.3.
+Upgrading Spice runtime to v1.8.3...
+Spice runtime upgraded to v1.8.3 successfully.
+```
+
+### First-Time Runtime Install
+
+If runtime isn't installed:
+
+```bash
+spice upgrade
+```
+
+**Output:**
+```
+Spice.ai OSS CLI v1.8.3
+Current CLI version: v1.8.3
+Runtime is not installed.
+Checking for latest Spice release...
+CLI is already at v1.8.3.
+Upgrading Spice runtime to v1.8.3...
+Spice runtime upgraded to v1.8.3 successfully.
+```
+
+## Version Format
+
+Versions must start with `v`:
+
+- **Valid:** `v1.8.3`, `v2.0.0`, `v1.10.0-beta`
+- **Invalid:** `1.8.3`, `latest`, `stable`
+
+```bash
+spice upgrade 1.8.3  # Invalid
+```
+
+**Output:**
+```
+Error: Invalid version format: 1.8.3. Expected format: v1.8.3
+```
+
+## Platform Detection
+
+The command auto-detects platform and downloads appropriate binary:
+
+| OS | Architecture | Binary |
+|----|--------------|--------|
+| macOS | ARM64 | `spice-darwin-arm64.tar.gz` |
+| macOS | x86_64 | `spice-darwin-amd64.tar.gz` |
+| Linux | ARM64 | `spice-linux-arm64.tar.gz` |
+| Linux | x86_64 | `spice-linux-amd64.tar.gz` |
+| Windows | x86_64 | `spice-windows-amd64.zip` |
+
+### Runtime Accelerator Detection
+
+- **macOS ARM64:** Downloads Metal-accelerated runtime
+- **Linux x86_64:** Attempts CUDA-accelerated runtime, falls back to CPU
+- **Other platforms:** CPU-only runtime
+
+## File Locations
+
+| File | Location | Description |
+|------|----------|-------------|
+| CLI binary | `/usr/local/bin/spice` (macOS/Linux) | Main executable |
+| Runtime binary | `~/.spice/bin/spiced` | Runtime daemon |
+| Version file | `~/.spice/runtime_version.txt` | Installed version |
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success - Upgraded or already up to date |
+| `1` | Error - Network failure, invalid version, or download error |
+
+## Troubleshooting
+
+### Network Error
+
+```
+Error: Failed to fetch latest release: Connection refused
+```
+
+Check internet connection and GitHub availability:
+
+```bash
+curl -I https://api.github.com
+```
+
+### Invalid Version
+
+```
+Error: Failed to fetch release v1.99.99: 404 Not Found
+```
+
+Verify version exists:
+
+```bash
+curl https://api.github.com/repos/spiceai/spiceai/releases/tags/v1.99.99
+```
+
+List available versions:
+
+```bash
+curl https://api.github.com/repos/spiceai/spiceai/releases | jq '.[].tag_name'
+```
+
+### Permission Denied
+
+```bash
+# macOS/Linux: Grant write permissions
+sudo chmod +x /usr/local/bin/spice
+sudo chown $USER ~/.spice/bin/spiced
+```
+
+### Download Failed
+
+```
+Error: Failed to download runtime: ...
+```
+
+Retry with force:
+
+```bash
+spice upgrade --force
+```
+
+### CLI Locked
+
+If CLI is in use by another process:
+
+```
+Error: Failed to replace CLI binary: Resource busy
+```
+
+Close other `spice` processes and retry.
+
+## GitHub Releases
+
+Upgrades fetch from: `https://github.com/spiceai/spiceai/releases`
+
+View releases:
+
+```bash
+open https://github.com/spiceai/spiceai/releases
+```
+
+## Rollback
+
+To rollback to a previous version:
+
+```bash
+spice upgrade v1.7.0
+```
+
+## Pre-Release Versions
+
+Upgrade to beta/RC versions:
+
+```bash
+spice upgrade v2.0.0-beta.1
+```
+
+## Verification
+
+Verify upgrade success:
+
+```bash
+spice version
+```
+
+**Output:**
+```
+Spice CLI: v1.8.3
+Spice Runtime: v1.8.3
+```
+
+## Related Commands
+
+- [`spice version`](https://spiceai.org/docs/cli/version) - Show version information
+- [`spice install`](https://spiceai.org/docs/cli/install) - Install runtime only
+
+## Automatic Checks
+
+The CLI does not automatically check for updates. Run `spice upgrade` manually to upgrade.
+
+## Safe Upgrade
+
+The upgrade process is safe:
+
+- **Atomic replacement:** CLI binary replaced atomically
+- **Rollback:** Can downgrade to any version
+- **No data loss:** Doesn't affect `spicepod.yaml` or data
+
+## CI/CD Usage
+
+In CI/CD pipelines, pin to specific versions:
+
+```bash
+# Install specific version
+curl https://install.spiceai.org | bash -s -- v1.8.3
+
+# Or upgrade to specific version
+spice upgrade v1.8.3
+```

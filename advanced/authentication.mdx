@@ -1,0 +1,234 @@
+---
+title: 'Authentication'
+description: 'Configure authentication mechanisms in Spice.ai'
+---
+
+# Authentication
+
+Spice.ai provides flexible authentication mechanisms to secure access to your data and AI endpoints. Authentication can be configured to protect HTTP, Flight SQL, and gRPC APIs.
+
+## Authentication Methods
+
+### API Key Authentication
+
+API key authentication is the primary method for securing Spice runtime endpoints. API keys can be configured with different permission levels:
+
+- **Read-Only (`:ro`)**: Allows queries but prevents data modification
+- **Read-Write (`:rw`)**: Allows both queries and data modification operations
+
+#### Configuration
+
+Configure API key authentication in your `spicepod.yaml`:
+
+```yaml
+version: v1
+kind: Spicepod
+name: my-app
+
+runtime:
+  auth:
+    api_key:
+      enabled: true
+      keys:
+        - ${secrets:API_KEY_1}:rw  # Read-write key from secrets
+        - ${env:API_KEY_2}:ro      # Read-only key from environment
+        - static-key-example:ro    # Direct key (not recommended for production)
+```
+
+#### Key Format
+
+API keys follow the format: `<key-value>:<permission>`
+
+- If no permission suffix is provided, the key defaults to **read-only** (`:ro`)
+- Use `:rw` suffix for read-write permissions
+- Use `:ro` suffix to explicitly mark as read-only
+
+**Examples:**
+
+```yaml
+keys:
+  - my-secret-key              # Defaults to read-only
+  - my-secret-key:ro           # Explicitly read-only
+  - my-admin-key:rw            # Read-write access
+```
+
+### Using API Keys
+
+#### HTTP Requests
+
+Include the API key in the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: my-secret-key" \
+  http://localhost:3000/v1/sql \
+  -d "SELECT * FROM my_dataset LIMIT 10"
+```
+
+#### Flight SQL
+
+API keys are used during the handshake phase and for subsequent requests:
+
+```python
+import pyarrow.flight as flight
+
+client = flight.FlightClient("grpc://localhost:50051")
+
+# Authenticate with API key
+token = client.authenticate_basic_token(b"", b"my-secret-key")
+
+# Use authenticated client for queries
+info = client.get_flight_info(
+    flight.FlightDescriptor.for_command(b"SELECT * FROM my_dataset")
+)
+```
+
+#### Session-Based Authentication
+
+After initial authentication with an API key, Flight SQL clients receive a session token that can be used for subsequent requests. The runtime automatically manages session validation and tracks which API key was used to create each session.
+
+**Session workflow:**
+
+1. Client authenticates with API key during handshake
+2. Runtime returns a session ID as the Bearer token
+3. Client uses session ID for all subsequent requests
+4. Runtime validates session and applies original API key's permissions
+
+## Authentication Architecture
+
+### Endpoint Protection
+
+Spice provides separate authentication for different protocol endpoints:
+
+- **HTTP Auth**: Protects REST API endpoints (`/v1/sql`, `/v1/query`, etc.)
+- **Flight Basic Auth**: Protects Arrow Flight SQL connections
+- **gRPC Auth**: Protects gRPC service endpoints
+
+All three can be configured with the same API key authentication mechanism.
+
+### Anonymous Access
+
+When authentication is **not configured**, Spice allows anonymous access with an `anonymous` principal. This is useful for development but should be disabled in production.
+
+```yaml
+# Authentication disabled - allows anonymous access
+runtime:
+  auth:
+    api_key:
+      enabled: false  # or omit the auth section entirely
+```
+
+## Security Best Practices
+
+<Warning>
+  Never commit API keys directly in your `spicepod.yaml` file. Always use secrets management.
+</Warning>
+
+### 1. Use Secrets Management
+
+Always reference API keys from secure secret stores:
+
+```yaml
+runtime:
+  auth:
+    api_key:
+      enabled: true
+      keys:
+        - ${secrets:SPICE_API_KEY_ADMIN}:rw
+        - ${secrets:SPICE_API_KEY_READONLY}:ro
+```
+
+See [Secrets Management](/advanced/secrets) for details on configuring secret stores.
+
+### 2. Principle of Least Privilege
+
+Use read-only keys (`:ro`) by default. Only grant read-write (`:rw`) access when necessary:
+
+```yaml
+keys:
+  - ${secrets:DASHBOARD_KEY}:ro      # Dashboards only need read access
+  - ${secrets:ADMIN_KEY}:rw          # Admin operations need write access
+  - ${secrets:ANALYTICS_KEY}:ro      # Analytics tools only need read access
+```
+
+### 3. Rotate Keys Regularly
+
+Implement a key rotation policy:
+
+1. Generate new keys in your secret store
+2. Update the secret store values
+3. Restart Spice runtime to pick up new keys
+4. Invalidate old keys
+
+### 4. Use TLS for Production
+
+Always combine authentication with TLS encryption in production environments:
+
+```yaml
+runtime:
+  auth:
+    api_key:
+      enabled: true
+      keys:
+        - ${secrets:API_KEY}:rw
+  tls:
+    enabled: true
+    certificate_file: /path/to/cert.pem
+    key_file: /path/to/key.pem
+```
+
+See [TLS Configuration](/advanced/tls) for complete TLS setup instructions.
+
+### 5. Constant-Time Comparison
+
+Spice uses constant-time comparison for API key validation to prevent timing attacks. This is automatically applied to all API key comparisons.
+
+### 6. Key Redaction
+
+API keys are automatically redacted in:
+- Log output
+- Error messages  
+- Debug traces
+
+Keys appear as `[REDACTED]` in all logging to prevent accidental exposure.
+
+## Authentication for Data Sources
+
+In addition to runtime authentication, you can configure authentication for individual data sources using secrets:
+
+```yaml
+datasets:
+  - from: postgres:my_database
+    name: customers
+    params:
+      pg_host: db.example.com
+      pg_port: "5432"
+      pg_db: production
+      pg_user: ${secrets:PG_USER}
+      pg_pass: ${secrets:PG_PASSWORD}
+```
+
+This keeps credentials secure and separate from application code. See [Secrets Management](/advanced/secrets) for more details.
+
+## Monitoring Authentication
+
+Spice logs authentication attempts at appropriate levels:
+
+```bash
+# Successful authentication
+INFO: Authentication successful for principal: admin
+
+# Failed authentication
+WARN: Authentication failed: Invalid API key
+```
+
+Consider integrating with your monitoring system to track:
+- Failed authentication attempts
+- Authentication rate by key
+- Session creation and expiration
+
+## Related Resources
+
+- [Authorization and Access Control](/advanced/authorization)
+- [TLS Configuration](/advanced/tls)
+- [Secrets Management](/advanced/secrets)
+- [Runtime Configuration](/reference/spicepod/runtime)

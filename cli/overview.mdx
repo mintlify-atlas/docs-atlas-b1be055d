@@ -1,0 +1,158 @@
+---
+title: 'CLI Overview'
+description: 'Command-line interface for Spice.ai'
+---
+
+The Spice CLI (`spice`) is the primary command-line tool for interacting with the Spice.ai runtime. Use it to initialize projects, manage the runtime, query data, and perform semantic search.
+
+## Installation
+
+The Spice CLI can be installed via the installation script:
+
+```bash
+curl https://install.spiceai.org | /bin/bash
+```
+
+For other installation methods, see the [installation guide](https://spiceai.org/docs/installation).
+
+## Quick Start
+
+```bash
+# Initialize a new Spice app
+spice init my_app
+cd my_app
+
+# Start the Spice runtime
+spice run
+
+# Query data (in another terminal)
+spice sql
+```
+
+## Global Flags
+
+These flags are available for all commands:
+
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `-v, --verbose` | - | - | Enable verbose logging. Use `-v` for debug, `-vv` for trace |
+| `--api-key <KEY>` | `SPICE_API_KEY` | - | API key for authentication with Spice Cloud or runtime |
+| `--cloud` | - | `false` | Use Spice Cloud instance (requires `--api-key`) |
+| `--http-endpoint <URL>` | - | `http://127.0.0.1:8090` | HTTP endpoint of the Spice runtime |
+| `--tls-root-certificate-file <PATH>` | - | - | Path to root certificate for TLS verification |
+
+## Commands
+
+### Runtime Management
+
+- [`spice init`](/cli/init) - Initialize a new Spice app
+- [`spice run`](/cli/run) - Start the Spice runtime
+- [`spice upgrade`](/cli/upgrade) - Upgrade CLI and runtime to latest version
+
+### Data Operations
+
+- [`spice sql`](/cli/sql) - Interactive SQL query REPL
+- [`spice add`](/cli/add) - Add a Spicepod dependency
+- [`spice dataset`](/cli/dataset) - Configure datasets
+- [`spice search`](/cli/search) - Semantic search REPL
+
+### Model Operations
+
+- [`spice model`](/cli/model) - Model management commands
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Success |
+| `1` | General error (invalid arguments, runtime error, connection failure) |
+
+## Configuration Files
+
+The CLI interacts with several configuration files:
+
+### spicepod.yaml
+
+The main configuration file for a Spice app, defining datasets, models, and dependencies.
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+datasets:
+  - from: postgres:my_table
+    name: my_table
+    acceleration:
+      enabled: true
+```
+
+### .env / .env.local
+
+Environment variables for credentials and configuration:
+
+```bash
+SPICE_API_KEY=your_api_key
+SPICE_POSTGRES_CONNECTION_STRING=postgresql://user:pass@host/db
+```
+
+The CLI automatically loads API keys from `.env.local` (preferred) or `.env` files.
+
+## Directory Structure
+
+```
+~/.spice/
+├── bin/
+│   └── spiced          # Runtime binary
+└── runtime_version.txt # Installed runtime version
+
+my_app/
+├── spicepod.yaml       # Main configuration
+├── .env                # Environment variables
+├── spicepods/          # Downloaded dependencies
+└── datasets/           # Dataset configurations
+    └── my_dataset/
+        └── dataset.yaml
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SPICE_API_KEY` | API key for Spice Cloud authentication |
+| `SPICE_SPICEAI_API_KEY` | Alternative API key variable name |
+
+## Getting Help
+
+All commands support the `--help` flag:
+
+```bash
+spice --help
+spice run --help
+spice sql --help
+```
+
+## Version Information
+
+```bash
+spice version
+```
+
+Shows version information for both the CLI and installed runtime.
+
+## Cloud Mode
+
+Connect to Spice Cloud with the `--cloud` flag:
+
+```bash
+spice sql --cloud --api-key <your-api-key>
+```
+
+Or set the environment variable:
+
+```bash
+export SPICE_API_KEY=<your-api-key>
+spice sql --cloud
+```
+
+Cloud mode automatically uses `https://data.spiceai.io` as the endpoint.

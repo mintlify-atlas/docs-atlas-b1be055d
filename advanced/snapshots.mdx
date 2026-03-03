@@ -1,0 +1,598 @@
+---
+title: 'Acceleration Snapshots'
+description: 'Configure snapshots for fast cold starts and recovery in Spice.ai'
+---
+
+## Overview
+
+Acceleration snapshots enable fast cold starts by bootstrapping accelerated datasets from pre-built snapshots stored in S3. Instead of refreshing data from source on startup (which can take minutes), snapshots allow datasets to become available in seconds.
+
+## Use Cases
+
+### 1. Fast Cold Starts
+
+In ephemeral environments (Kubernetes, serverless), pods frequently start and stop. Snapshots eliminate slow startup times:
+
+**Without snapshots:**
+```
+Pod Start -> Full Refresh from Source (2-10 minutes) -> Ready
+```
+
+**With snapshots:**
+```
+Pod Start -> Load from S3 Snapshot (5-30 seconds) -> Ready
+```
+
+### 2. Disaster Recovery
+
+Restore accelerated data if local storage is lost:
+
+```yaml
+datasets:
+  - name: critical_data
+    from: postgres:production_db
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      snapshot:
+        enabled: true
+        location: s3://backups/snapshots/
+```
+
+### 3. Ephemeral Storage with Persistent Data
+
+Use ephemeral storage (faster, cheaper) without losing data:
+
+```yaml
+# Kubernetes with ephemeral volumes
+volumes:
+  - name: spice-data
+    emptyDir: {}  # Ephemeral, cleared on pod restart
+
+datasets:
+  - name: metrics
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true  # Persist to S3, load on restart
+```
+
+## Configuration
+
+### Basic Snapshot Configuration
+
+```yaml
+datasets:
+  - name: events
+    from: postgres:events
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/events/
+```
+
+### Snapshot Creation Policies
+
+#### 1. On Refresh Complete (Default)
+
+Create snapshot after each successful refresh:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      refresh_mode: full
+      refresh_check_interval: 1h
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        create_policy: on_refresh_complete  # Default
+```
+
+**Timeline:**
+
+- 00:00 - Refresh completes, snapshot created
+- 01:00 - Refresh completes, snapshot created
+- 02:00 - Refresh completes, snapshot created
+
+#### 2. On Change
+
+Create snapshot only when data changes:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        create_policy: on_change
+```
+
+**Benefits:**
+
+- Reduces snapshot storage costs
+- Avoids redundant snapshots for unchanged data
+- Useful for slow-changing dimensions
+
+**How it works:**
+
+Snapshots track `last_updated_at` timestamp:
+
+1. Data inserted/updated → `last_updated_at` updated
+2. Refresh completes → Compare `last_updated_at` with last snapshot
+3. If changed → Create new snapshot
+4. If unchanged → Skip snapshot creation
+
+#### 3. Interval-Based
+
+Create snapshots on a fixed schedule:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        create_interval: 1h  # Every hour
+```
+
+**Use case:** Decouple snapshot frequency from refresh frequency.
+
+**Timeline:**
+
+- 00:00 - Snapshot created
+- 01:00 - Snapshot created
+- 02:00 - Snapshot created (regardless of refresh)
+
+#### 4. Batch-Based
+
+Create snapshot after N batch updates:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      refresh_mode: append
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        create_after_batches: 100  # After 100 appended batches
+```
+
+**Use case:** Append-mode datasets with continuous updates.
+
+### Snapshot Metadata
+
+Snapshots include metadata for validation:
+
+```json
+{
+  "dataset_name": "events",
+  "created_at": "2024-01-15T10:30:00Z",
+  "row_count": 1500000,
+  "schema_version": "1.2.0",
+  "spice_version": "1.0.0",
+  "last_updated_at": 1705315800000,
+  "layout": {
+    "files": [
+      "partition_0.parquet",
+      "partition_1.parquet"
+    ]
+  }
+}
+```
+
+## Snapshot Loading
+
+### Bootstrap on Startup
+
+On startup, Spice automatically checks for snapshots:
+
+```
+1. Check S3 for snapshot manifest
+2. If found:
+   a. Download snapshot files
+   b. Load into accelerator
+   c. Mark dataset ready (seconds)
+   d. Start incremental refresh (background)
+3. If not found:
+   a. Perform full refresh from source (minutes)
+   b. Create initial snapshot
+   c. Mark dataset ready
+```
+
+### Incremental Refresh After Bootstrap
+
+After loading from snapshot, catch up with source:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      refresh_mode: append
+      time_column: created_at
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+```
+
+**Process:**
+
+1. Load snapshot (e.g., data up to 09:00)
+2. Dataset ready immediately
+3. Background refresh: `SELECT * FROM events WHERE created_at > '2024-01-15 09:00'`
+4. Append new data
+
+### Force Full Refresh
+
+Skip snapshot and force full refresh:
+
+```bash
+# Via API
+curl -X POST http://localhost:8090/v1/datasets/events/acceleration/refresh
+
+# Or SQL
+REFRESH DATASET events;
+```
+
+## S3 Configuration
+
+### AWS Credentials
+
+```yaml
+secrets:
+  - from: env
+    name: aws
+
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        params:
+          region: us-east-1
+```
+
+**Environment variables:**
+
+```bash
+export AWS_ACCESS_KEY_ID=your_key
+export AWS_SECRET_ACCESS_KEY=your_secret
+export AWS_REGION=us-east-1
+```
+
+### S3 Express One Zone
+
+Use S3 Express One Zone for ultra-low latency:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+        location: s3express://bucket--use1-az1--x-s3/snapshots/
+        params:
+          region: us-east-1
+```
+
+**Performance benefits:**
+
+- 10x faster than standard S3
+- Single-digit millisecond latency
+- Higher throughput
+
+**Cost consideration:** ~10x more expensive than standard S3.
+
+### Custom S3-Compatible Storage
+
+Use MinIO, DigitalOcean Spaces, etc.:
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+        location: s3://bucket/snapshots/
+        params:
+          endpoint: https://minio.example.com
+          region: us-east-1
+          access_key_id: ${secrets:minio_key}
+          secret_access_key: ${secrets:minio_secret}
+```
+
+## Snapshot Lifecycle Management
+
+### Retention Policy
+
+Control snapshot retention with S3 Lifecycle policies:
+
+```json
+{
+  "Rules": [
+    {
+      "Id": "DeleteOldSnapshots",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "snapshots/"
+      },
+      "Expiration": {
+        "Days": 7
+      }
+    }
+  ]
+}
+```
+
+### Versioning
+
+Enable S3 versioning for snapshot history:
+
+```bash
+aws s3api put-bucket-versioning \
+  --bucket my-snapshots \
+  --versioning-configuration Status=Enabled
+```
+
+Revert to previous snapshot:
+
+```bash
+aws s3api list-object-versions \
+  --bucket my-snapshots \
+  --prefix snapshots/events/manifest.json
+
+aws s3api get-object \
+  --bucket my-snapshots \
+  --key snapshots/events/manifest.json \
+  --version-id <VERSION_ID> \
+  manifest.json
+```
+
+## Snapshot Format
+
+### DuckDB Snapshots
+
+DuckDB snapshots include:
+
+- Database file (`.duckdb`)
+- WAL file (`.duckdb.wal`) if present
+- Manifest with metadata
+
+```
+s3://bucket/snapshots/events/
+├── manifest.json
+├── data.duckdb
+└── data.duckdb.wal
+```
+
+### Cayenne (Vortex) Snapshots
+
+Cayenne snapshots include:
+
+- Multiple `.vortex` partition files
+- SQLite metadata database
+- Manifest
+
+```
+s3://bucket/snapshots/events/
+├── manifest.json
+├── partition_0.vortex
+├── partition_1.vortex
+├── partition_2.vortex
+└── metadata.db
+```
+
+### Arrow Snapshots
+
+Arrow (in-memory) snapshots saved as Parquet:
+
+```
+s3://bucket/snapshots/events/
+├── manifest.json
+└── data.parquet
+```
+
+## Performance Considerations
+
+### Snapshot Size and Load Time
+
+| Dataset Size | Snapshot Size | Load Time (S3 Standard) | Load Time (S3 Express) |
+|--------------|---------------|-------------------------|------------------------|
+| 100 MB | ~100 MB | 2-5 sec | &lt;1 sec |
+| 1 GB | ~1 GB | 10-20 sec | 2-5 sec |
+| 10 GB | ~10 GB | 1-2 min | 10-20 sec |
+| 100 GB | ~100 GB | 10-20 min | 1-2 min |
+
+### Network Bandwidth
+
+Load time depends on network throughput:
+
+```
+Load Time = Snapshot Size / Network Bandwidth
+
+Example:
+  10 GB snapshot / 1 Gbps network = 80 seconds
+  10 GB snapshot / 10 Gbps network = 8 seconds
+```
+
+### Compression
+
+DuckDB and Cayenne automatically compress snapshots:
+
+- Typical compression ratio: 3-10x
+- No additional configuration needed
+- Transparent decompression on load
+
+## Monitoring
+
+### Snapshot Metrics
+
+```sql
+SELECT 
+  metric_name,
+  metric_value,
+  labels
+FROM runtime.metrics
+WHERE metric_name LIKE 'snapshot%'
+ORDER BY timestamp DESC;
+```
+
+**Available metrics:**
+
+- `snapshot_creation_total` - Total snapshots created
+- `snapshot_creation_duration_ms` - Snapshot creation time
+- `snapshot_load_duration_ms` - Snapshot load time
+- `snapshot_size_bytes` - Snapshot size
+
+### Snapshot Logs
+
+```log
+2024-01-15T10:30:00Z INFO Snapshot created for dataset events in 2.5s
+2024-01-15T10:30:00Z INFO Uploaded snapshot to s3://bucket/snapshots/events/
+2024-01-15T11:00:00Z INFO Bootstrapped dataset events from snapshot in 3.2s
+```
+
+## Best Practices
+
+### 1. Enable Snapshots for Large Datasets
+
+```yaml
+# Any dataset > 1GB should use snapshots
+datasets:
+  - name: large_dataset
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true
+```
+
+### 2. Use S3 Express for Latency-Sensitive Apps
+
+```yaml
+datasets:
+  - name: hot_data
+    acceleration:
+      snapshot:
+        enabled: true
+        location: s3express://bucket--use1-az1--x-s3/snapshots/
+```
+
+### 3. Choose Appropriate Create Policy
+
+- **Frequently changing data** → `on_refresh_complete`
+- **Slow-changing dimensions** → `on_change`
+- **Continuous append** → `create_after_batches: N`
+- **Fixed schedule** → `create_interval: 1h`
+
+### 4. Configure S3 Lifecycle Policies
+
+Avoid indefinite snapshot accumulation:
+
+```json
+{
+  "Rules": [{
+    "Expiration": {"Days": 7},
+    "NoncurrentVersionExpiration": {"NoncurrentDays": 3}
+  }]
+}
+```
+
+### 5. Monitor Bootstrap Time
+
+Track time to ready:
+
+```sql
+SELECT 
+  dataset_name,
+  bootstrapped_from_snapshot,
+  load_duration_ms
+FROM runtime.dataset_metrics
+ORDER BY load_duration_ms DESC;
+```
+
+## Troubleshooting
+
+### Snapshot Not Created
+
+**Check configuration:**
+
+```yaml
+datasets:
+  - name: events
+    acceleration:
+      enabled: true
+      snapshot:
+        enabled: true  # Must be true
+        location: s3://bucket/snapshots/  # Must be valid S3 path
+```
+
+**Check logs:**
+
+```bash
+grep -i snapshot /var/log/spiced.log
+```
+
+**Common issues:**
+
+1. Missing S3 credentials
+2. Invalid S3 bucket/path
+3. Insufficient S3 permissions
+4. Snapshot creation failed (check logs)
+
+### Snapshot Load Failed
+
+**Check S3 access:**
+
+```bash
+aws s3 ls s3://bucket/snapshots/events/
+```
+
+**Verify manifest:**
+
+```bash
+aws s3 cp s3://bucket/snapshots/events/manifest.json -
+```
+
+**Common issues:**
+
+1. Schema mismatch (source schema changed)
+2. Corrupted snapshot files
+3. Network timeout during download
+4. Insufficient disk space
+
+### Slow Snapshot Creation
+
+**Possible causes:**
+
+1. Large dataset size
+2. Slow S3 upload speed
+3. Concurrent snapshot writes
+
+**Solutions:**
+
+1. Use S3 Express One Zone
+2. Increase network bandwidth
+3. Adjust `create_interval` to reduce frequency
+4. Use `on_change` policy to skip unchanged data
+
+## Related Topics
+
+- [Query Optimization](/advanced/query-optimization) - Query performance tuning
+- [Caching](/advanced/caching) - Results and acceleration caching
+- [Partitioning](/advanced/partitioning) - Data partitioning strategies

@@ -1,0 +1,458 @@
+---
+title: 'spice search'
+description: 'Interactive semantic search REPL'
+---
+
+The `spice search` command provides an interactive REPL for performing semantic search across datasets using embeddings.
+
+## Usage
+
+```bash
+spice search [OPTIONS]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-l, --limit <NUM>` | `10` | Maximum number of search results |
+| `--cache-control <MODE>` | `cache` | Cache control: `cache` or `no-cache` |
+| `--model <NAME>` | (default) | Embedding model to use for search |
+| `--endpoint <URL>` | `http://localhost:8090` | Remote Spice instance HTTP endpoint |
+| `--headers <KEY:VALUE>` | - | Custom HTTP headers (can be specified multiple times) |
+| `-o, --output <FORMAT>` | `table` | Output format: `table` or `json` |
+
+## Global Options
+
+Inherits [global flags](/cli/overview#global-flags):
+
+- `--api-key <KEY>` - API key for authentication
+- `--cloud` - Connect to Spice Cloud
+
+## Prerequisites
+
+### Configure Datasets with Embeddings
+
+Datasets must have embeddings enabled:
+
+```yaml
+datasets:
+  - from: postgres:documents
+    name: docs
+    embeddings:
+      - column: content
+        model: minilm
+```
+
+### Load Embedding Model
+
+```yaml
+models:
+  - from: huggingface:huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+    name: minilm
+```
+
+## Examples
+
+### Basic Search
+
+Start the REPL:
+
+```bash
+spice search
+```
+
+**Output:**
+```
+Welcome to the Spice.ai search REPL! Enter your search queries.
+
+search> machine learning tutorials
+```
+
+**Results:**
+```
++------+-------------------------------------+--------+---------+
+| Rank | Match                               | Score  | Dataset |
++------+-------------------------------------+--------+---------+
+| 1    | Introduction to Machine Learning... | 0.8923 | docs    |
+| 2    | Deep Learning Tutorial for Begin... | 0.8745 | docs    |
+| 3    | ML Fundamentals: A Complete Guid... | 0.8621 | docs    |
++------+-------------------------------------+--------+---------+
+
+Time: 0.124 seconds. 3 results.
+```
+
+### Search with Primary Keys
+
+When datasets have primary keys, they're displayed:
+
+```bash
+spice search
+```
+
+**Input:**
+```
+search> database optimization
+```
+
+**Results:**
+```
++------+-----+-------------------------------------+--------+---------+
+| Rank | Key | Match                               | Score  | Dataset |
++------+-----+-------------------------------------+--------+---------+
+| 1    | 42  | Database Indexing Strategies for... | 0.9012 | docs    |
+| 2    | 87  | Query Optimization Techniques in... | 0.8834 | docs    |
+| 3    | 123 | Performance Tuning for PostgreS... | 0.8756 | docs    |
++------+-----+-------------------------------------+--------+---------+
+
+Time: 0.098 seconds. 3 results.
+```
+
+### JSON Output
+
+```bash
+spice search -o json
+```
+
+**Input:**
+```
+search> api documentation
+```
+
+**Output:**
+```json
+{
+  "results": [
+    {
+      "matches": {
+        "content": "REST API Documentation Guide"
+      },
+      "score": 0.9123,
+      "dataset": "docs",
+      "primary_key": {
+        "id": 15
+      }
+    },
+    {
+      "matches": {
+        "content": "GraphQL API Reference"
+      },
+      "score": 0.8845,
+      "dataset": "docs",
+      "primary_key": {
+        "id": 27
+      }
+    }
+  ],
+  "duration_ms": 82
+}
+```
+
+### Limit Results
+
+```bash
+spice search --limit 5
+```
+
+**Input:**
+```
+search> kubernetes deployment
+```
+
+Returns top 5 results only.
+
+### Custom Model
+
+Specify an embedding model:
+
+```bash
+spice search --model ada
+```
+
+### Disable Cache
+
+Force fresh results:
+
+```bash
+spice search --cache-control no-cache
+```
+
+**Output:**
+```
+search> example query
+...
+Time: 0.234 seconds. 10 results.
+```
+
+Note: No "(cached)" indicator.
+
+### Cached Results
+
+With default cache mode:
+
+```bash
+spice search
+```
+
+**First query:**
+```
+search> example query
+Time: 0.234 seconds. 10 results.
+```
+
+**Repeat query:**
+```
+search> example query
+Time: 0.003 seconds. 10 results (cached).
+```
+
+### Remote Runtime
+
+```bash
+spice search --endpoint http://remote-host:8090
+```
+
+### Custom Headers
+
+```bash
+spice search \
+  --endpoint https://api.example.com \
+  --headers "Authorization:Bearer token123" \
+  --headers "X-Tenant-ID:acme"
+```
+
+## REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `<query>` | Perform semantic search |
+| `.clear` | Clear the screen |
+| `exit`, `quit` | Exit the REPL |
+| `.exit`, `.quit` | Exit the REPL |
+| `Ctrl+C` | Cancel or exit |
+| `Ctrl+D` | Exit REPL |
+
+## Search Query Features
+
+### Natural Language
+
+Use plain English queries:
+
+```
+search> how to configure kubernetes
+search> best practices for API design
+search> troubleshooting docker containers
+```
+
+### Long Queries
+
+Multi-sentence queries work:
+
+```
+search> I need information about setting up continuous integration pipelines with GitHub Actions for a Python project
+```
+
+### Keywords
+
+Keyword searches also work:
+
+```
+search> terraform aws s3
+```
+
+## Output Format
+
+### Table Format (Default)
+
+Results display in a table with:
+
+- **Rank:** 1-based result ranking
+- **Key:** Primary key value(s) (if dataset has primary key)
+- **Match:** Matched text (first 3 lines, truncated)
+- **Score:** Similarity score (0.0 - 1.0)
+- **Dataset:** Source dataset name
+
+### Match Truncation
+
+Long text is truncated:
+
+- First 3 lines shown
+- Long lines truncated with `...`
+- Multiple matches separated by `;`
+
+### Multiple Datasets
+
+When searching across multiple datasets:
+
+```
++------+-----+-----------------------------+--------+-----------+
+| Rank | Key | Match                       | Score  | Dataset   |
++------+-----+-----------------------------+--------+-----------+
+| 1    | 42  | Machine learning overview   | 0.9123 | docs      |
+| 2    | 15  | ML fundamentals             | 0.8956 | tutorials |
+| 3    | 87  | Introduction to ML          | 0.8834 | docs      |
++------+-----+-----------------------------+--------+-----------+
+```
+
+## History
+
+The REPL maintains search history in `~/.spice/search_history.txt`:
+
+- Navigate with Up/Down arrow keys
+- Search history with Ctrl+R
+- Persists across sessions
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SPICE_API_KEY` | API key for authentication |
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Normal exit |
+| `1` | Connection error or runtime unavailable |
+
+## Troubleshooting
+
+### No Results
+
+```
+search> example query
+No results.
+```
+
+**Possible causes:**
+
+1. No datasets with embeddings configured
+2. Datasets haven't been indexed yet
+3. Query doesn't match any content
+
+**Solution:**
+
+Check dataset configuration:
+
+```yaml
+datasets:
+  - from: postgres:documents
+    name: docs
+    embeddings:
+      - column: content
+        model: minilm
+```
+
+### Connection Error
+
+```
+Error: Failed to connect to runtime at http://localhost:8090
+```
+
+Ensure runtime is running:
+
+```bash
+spice run &
+spice search
+```
+
+### Model Not Found
+
+```
+Error: Model 'nonexistent' not found
+```
+
+Verify model is configured and loaded:
+
+```bash
+spice models
+```
+
+### Slow Searches
+
+First search may be slow while embeddings are generated. Subsequent searches use cache:
+
+```
+search> query
+Time: 2.345 seconds. 10 results.  # First search
+
+search> query
+Time: 0.012 seconds. 10 results (cached).  # Cached
+```
+
+## Related Commands
+
+- [`spice run`](/cli/run) - Start runtime with search enabled
+- [`spice models`](/cli/model) - List embedding models
+- [`spice sql`](/cli/sql) - SQL query REPL
+
+## Search API
+
+The search REPL uses the `/v1/search` HTTP API. Use it programmatically:
+
+```bash
+curl -X POST http://localhost:8090/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "machine learning",
+    "limit": 10
+  }'
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "matches": {
+        "content": "Machine Learning Overview"
+      },
+      "score": 0.9123,
+      "dataset": "docs",
+      "primary_key": {"id": 42}
+    }
+  ],
+  "duration_ms": 82
+}
+```
+
+See [Search API Reference](https://spiceai.org/docs/api/search) for full documentation.
+
+## Advanced Configuration
+
+### Multiple Embedding Columns
+
+Search across multiple columns:
+
+```yaml
+embeddings:
+  - column: title
+    model: minilm
+  - column: content
+    model: minilm
+  - column: summary
+    model: minilm
+```
+
+### Different Models per Column
+
+```yaml
+embeddings:
+  - column: english_text
+    model: minilm-en
+  - column: french_text
+    model: minilm-fr
+```
+
+### Hybrid Search
+
+Combine semantic and keyword search (configure in spicepod.yaml):
+
+```yaml
+embeddings:
+  - column: content
+    model: minilm
+    hybrid:
+      enabled: true
+      weight: 0.7  # 70% semantic, 30% keyword
+```

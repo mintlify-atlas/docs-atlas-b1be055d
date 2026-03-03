@@ -1,0 +1,311 @@
+---
+title: 'Datasets API'
+description: 'Manage and monitor datasets in the Spice runtime'
+---
+
+## Overview
+
+The Datasets API provides endpoints to list configured datasets, trigger on-demand refreshes for accelerated datasets, and update refresh SQL at runtime.
+
+## List Datasets
+
+```
+GET /v1/datasets
+```
+
+Returns a list of all configured datasets with their configuration and optional status information.
+
+### Query Parameters
+
+<ParamField query="status" type="boolean" default={false}>
+  Include the current status of each dataset. Possible values:
+  - `initializing` - Dataset is being initialized
+  - `ready` - Dataset is ready for queries
+  - `disabled` - Dataset is disabled
+  - `error` - Dataset encountered an error
+  - `refreshing` - Dataset is currently refreshing
+  - `shuttingdown` - Dataset is shutting down
+</ParamField>
+
+<ParamField query="format" type="string" default="json">
+  Response format: `json` or `csv`
+</ParamField>
+
+<ParamField query="source" type="string">
+  Filter datasets by source (e.g., `postgres:aidemo_messages`)
+</ParamField>
+
+### Response
+
+<ResponseField name="(array)" type="array<object>">
+  Array of dataset information objects.
+
+  <ResponseField name="from" type="string">
+    The data source for the dataset (e.g., `postgres:syncs`, `databricks:hive_metastore.default.messages`)
+  </ResponseField>
+
+  <ResponseField name="name" type="string">
+    The name of the dataset as configured in the spicepod
+  </ResponseField>
+
+  <ResponseField name="replication_enabled" type="boolean">
+    Whether replication is enabled for this dataset
+  </ResponseField>
+
+  <ResponseField name="acceleration_enabled" type="boolean">
+    Whether acceleration is enabled for this dataset
+  </ResponseField>
+
+  <ResponseField name="status" type="string">
+    Current status of the dataset (only when `status=true` query parameter is set)
+  </ResponseField>
+
+  <ResponseField name="error" type="object">
+    Error information when status is `Error` (only when `status=true`)
+
+    <ResponseField name="category" type="string">
+      Error category (e.g., `dataset`)
+    </ResponseField>
+
+    <ResponseField name="type" type="string">
+      Error type (e.g., `auth`, `connection`)
+    </ResponseField>
+
+    <ResponseField name="code" type="string">
+      Stable error code (e.g., `dataset.auth`)
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="error_message" type="string">
+    Human-readable error message (only when `status=true` and status is `Error`)
+  </ResponseField>
+
+  <ResponseField name="properties" type="object">
+    Additional dataset properties (e.g., search support)
+  </ResponseField>
+</ResponseField>
+
+### Response Example (JSON)
+
+```json
+[
+  {
+    "from": "postgres:syncs",
+    "name": "daily_journal_accelerated",
+    "replication_enabled": false,
+    "acceleration_enabled": true,
+    "status": "Ready",
+    "error": null,
+    "error_message": null
+  },
+  {
+    "from": "databricks:hive_metastore.default.messages",
+    "name": "messages_accelerated",
+    "replication_enabled": false,
+    "acceleration_enabled": true,
+    "status": "Error",
+    "error": {
+      "category": "dataset",
+      "type": "auth",
+      "code": "dataset.auth"
+    },
+    "error_message": "Unable to authenticate with datasource credentials"
+  },
+  {
+    "from": "postgres:aidemo_messages",
+    "name": "general",
+    "replication_enabled": false,
+    "acceleration_enabled": false,
+    "status": "Initializing",
+    "error": null,
+    "error_message": null
+  }
+]
+```
+
+### Response Example (CSV)
+
+```csv
+from,name,replication_enabled,acceleration_enabled,status,error,error_message
+postgres:syncs,daily_journal_accelerated,false,true,Ready,,
+databricks:hive_metastore.default.messages,messages_accelerated,false,true,Error,dataset.auth,Unable to authenticate with datasource credentials
+postgres:aidemo_messages,general,false,false,Initializing,,
+```
+
+### Examples
+
+```bash
+# List all datasets
+curl http://localhost:8090/v1/datasets
+
+# List datasets with status information
+curl http://localhost:8090/v1/datasets?status=true
+
+# Filter by source
+curl http://localhost:8090/v1/datasets?source=postgres:aidemo_messages
+
+# Get CSV format
+curl http://localhost:8090/v1/datasets?format=csv
+```
+
+## Refresh Dataset
+
+```
+POST /v1/datasets/{name}/acceleration/refresh
+```
+
+Trigger an on-demand refresh for an accelerated dataset. Only applies to datasets with `full` and `append` refresh modes (not `changes` mode).
+
+### Path Parameters
+
+<ParamField path="name" type="string" required>
+  The name of the dataset to refresh
+</ParamField>
+
+### Request Body
+
+<ParamField body="refresh_sql" type="string">
+  SQL statement to use for the refresh. If not provided, uses the current `refresh_sql` configured in the spicepod or from a previous update.
+</ParamField>
+
+<ParamField body="refresh_mode" type="string">
+  Refresh mode override: `full` or `append`
+</ParamField>
+
+<ParamField body="refresh_jitter_max" type="string">
+  Maximum jitter to add before starting refresh (e.g., `10s`, `1m`)
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "refresh_sql": "SELECT * FROM taxi_trips WHERE tip_amount > 10.0",
+  "refresh_mode": "full",
+  "refresh_jitter_max": "10s"
+}
+```
+
+### Response
+
+<ResponseField name="message" type="string">
+  Result message indicating success or failure
+</ResponseField>
+
+### Status Codes
+
+- **201 Created** - Dataset refresh triggered successfully
+- **400 Bad Request** - Acceleration not enabled for the dataset
+- **404 Not Found** - Dataset not found
+- **500 Internal Server Error** - Unexpected error during refresh
+
+### Response Examples
+
+#### Success (201)
+
+```json
+{
+  "message": "Dataset refresh triggered for taxi_trips."
+}
+```
+
+#### Dataset Not Found (404)
+
+```json
+{
+  "message": "Dataset taxi_trips not found"
+}
+```
+
+#### Acceleration Not Enabled (400)
+
+```json
+{
+  "message": "Dataset taxi_trips does not have acceleration enabled"
+}
+```
+
+### Examples
+
+```bash
+# Trigger refresh with default settings
+curl -X POST http://localhost:8090/v1/datasets/taxi_trips/acceleration/refresh
+
+# Trigger refresh with custom SQL
+curl -X POST http://localhost:8090/v1/datasets/taxi_trips/acceleration/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_sql": "SELECT * FROM taxi_trips WHERE trip_date >= CURRENT_DATE - INTERVAL 7 DAY"
+  }'
+
+# Full refresh with jitter
+curl -X POST http://localhost:8090/v1/datasets/eth_recent_blocks/acceleration/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_mode": "full",
+    "refresh_jitter_max": "30s"
+  }'
+```
+
+## Update Refresh SQL
+
+```
+PATCH /v1/datasets/{name}/acceleration
+```
+
+Update the `refresh_sql` parameter for a dataset's acceleration at runtime. This change is temporary and will revert to the `spicepod.yml` definition on the next runtime restart.
+
+### Path Parameters
+
+<ParamField path="name" type="string" required>
+  The name of the dataset to update
+</ParamField>
+
+### Request Body
+
+<ParamField body="refresh_sql" type="string">
+  The updated SQL statement for the dataset's refresh
+</ParamField>
+
+### Request Example
+
+```json
+{
+  "refresh_sql": "SELECT * FROM eth_recent_blocks WHERE block_number > 100"
+}
+```
+
+### Status Codes
+
+- **200 OK** - Refresh SQL updated successfully
+- **404 Not Found** - Dataset not found
+- **500 Internal Server Error** - Error updating refresh SQL
+
+### Response Examples
+
+#### Dataset Not Found (404)
+
+```json
+{
+  "message": "Dataset eth_recent_blocks not found"
+}
+```
+
+#### Internal Error (500)
+
+```json
+{
+  "message": "Request failed. An internal server error occurred while updating refresh SQL."
+}
+```
+
+### Examples
+
+```bash
+# Update refresh SQL
+curl -X PATCH http://localhost:8090/v1/datasets/eth_recent_blocks/acceleration \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_sql": "SELECT * FROM eth_recent_blocks WHERE block_number > 100 AND timestamp > NOW() - INTERVAL 1 HOUR"
+  }'
+```

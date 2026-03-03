@@ -1,0 +1,308 @@
+---
+title: 'MySQL Data Connector'
+description: 'Connect Spice to MySQL and MariaDB databases for federated SQL queries'
+---
+
+The MySQL connector enables Spice to query MySQL and MariaDB databases with query push-down support, connection pooling, and data acceleration capabilities.
+
+## Status
+
+**Stable** - Production-ready with comprehensive testing
+
+## Supported Features
+
+- SQL query push-down (WHERE, JOIN, aggregations)
+- Connection pooling
+- SSL/TLS support
+- MariaDB compatibility
+- Data acceleration
+- Schema introspection
+- Multiple database support
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: mysql-demo
+
+datasets:
+  - from: mysql:users
+    name: users
+    params:
+      mysql_host: localhost
+      mysql_tcp_port: 3306
+      mysql_db: mydb
+      mysql_user: root
+      mysql_pass: ${secrets:mysql_password}
+```
+
+### With SSL/TLS
+
+```yaml
+datasets:
+  - from: mysql:orders
+    name: orders
+    params:
+      mysql_host: db.example.com
+      mysql_tcp_port: 3306
+      mysql_db: ecommerce
+      mysql_user: app_user
+      mysql_pass: ${secrets:mysql_password}
+      mysql_sslmode: required
+```
+
+### With Acceleration
+
+```yaml
+datasets:
+  - from: mysql:transactions
+    name: transactions
+    params:
+      mysql_host: ${env:MYSQL_HOST}
+      mysql_tcp_port: ${env:MYSQL_TCP_PORT}
+      mysql_db: ${env:MYSQL_DB}
+      mysql_user: ${env:MYSQL_USER}
+      mysql_pass: ${env:MYSQL_PASSWORD}
+      mysql_sslmode: disabled
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 1m
+```
+
+### Multiple Tables with Shared Config
+
+```yaml
+datasets:
+  - from: mysql:call_center
+    name: call_center
+    params: &mysql_params
+      mysql_host: ${env:MYSQL_HOST}
+      mysql_tcp_port: ${env:MYSQL_TCP_PORT}
+      mysql_db: ${env:MYSQL_DB}
+      mysql_user: ${env:MYSQL_USER}
+      mysql_pass: ${env:MYSQL_PASSWORD}
+      mysql_sslmode: disabled
+    acceleration: &acceleration
+      enabled: true
+      engine: arrow
+
+  - from: mysql:customer
+    name: customer
+    params: *mysql_params
+    acceleration: *acceleration
+
+  - from: mysql:orders
+    name: orders
+    params: *mysql_params
+    acceleration: *acceleration
+```
+
+## Parameters
+
+<ParamField path="mysql_host" type="string" required>
+  MySQL server hostname or IP address
+</ParamField>
+
+<ParamField path="mysql_tcp_port" type="integer" default="3306">
+  MySQL server port
+</ParamField>
+
+<ParamField path="mysql_db" type="string" required>
+  Database name
+</ParamField>
+
+<ParamField path="mysql_user" type="string" required>
+  Database user
+</ParamField>
+
+<ParamField path="mysql_pass" type="string" required>
+  Database password
+</ParamField>
+
+<ParamField path="mysql_sslmode" type="string" default="preferred">
+  SSL/TLS mode:
+  - `disabled`: No SSL
+  - `preferred`: Try SSL, fallback to non-SSL (default)
+  - `required`: Require SSL
+  - `verify_ca`: Require SSL and verify CA
+  - `verify_identity`: Require SSL and verify hostname
+</ParamField>
+
+<ParamField path="connection_pool_size" type="integer" default="10">
+  Maximum number of connections in the pool
+</ParamField>
+
+## Authentication
+
+### Password Authentication
+
+Standard username/password authentication:
+
+```yaml
+params:
+  mysql_user: app_user
+  mysql_pass: ${secrets:mysql_password}
+```
+
+### Using Environment Variables
+
+```yaml
+params:
+  mysql_host: ${env:MYSQL_HOST}
+  mysql_user: ${env:MYSQL_USER}
+  mysql_pass: ${env:MYSQL_PASSWORD}
+  mysql_db: ${env:MYSQL_DB}
+```
+
+## Use Cases
+
+### Legacy Database Migration
+
+Query legacy MySQL data alongside modern systems:
+
+```yaml
+datasets:
+  - from: mysql:legacy.customers
+    name: legacy_customers
+    params:
+      mysql_host: legacy-db.internal
+      mysql_db: legacy
+      mysql_user: readonly
+      mysql_pass: ${secrets:mysql_password}
+
+  - from: postgres:public.customers
+    name: new_customers
+    params:
+      pg_host: new-db.internal
+      pg_db: production
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+```
+
+Unified query:
+
+```sql
+SELECT 'legacy' as source, COUNT(*) as count FROM legacy_customers
+UNION ALL
+SELECT 'new' as source, COUNT(*) as count FROM new_customers;
+```
+
+### Analytics Dashboard
+
+```yaml
+datasets:
+  - from: mysql:analytics.daily_stats
+    name: daily_stats
+    params:
+      mysql_host: analytics-db.internal
+      mysql_tcp_port: 3306
+      mysql_db: analytics
+      mysql_user: dashboard
+      mysql_pass: ${secrets:mysql_password}
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_interval: 5m
+```
+
+Fast dashboard queries:
+
+```sql
+SELECT 
+  date,
+  SUM(revenue) as total_revenue,
+  AVG(order_value) as avg_order
+FROM daily_stats
+WHERE date >= CURRENT_DATE - INTERVAL '30' DAY
+GROUP BY date
+ORDER BY date;
+```
+
+### Multi-Tenant Database
+
+```yaml
+datasets:
+  - from: mysql:tenant_1.orders
+    name: tenant1_orders
+    params:
+      mysql_host: mysql.internal
+      mysql_db: tenant_1
+      mysql_user: app
+      mysql_pass: ${secrets:mysql_password}
+
+  - from: mysql:tenant_2.orders
+    name: tenant2_orders
+    params:
+      mysql_host: mysql.internal
+      mysql_db: tenant_2
+      mysql_user: app
+      mysql_pass: ${secrets:mysql_password}
+```
+
+Cross-tenant analytics:
+
+```sql
+SELECT 
+  'tenant1' as tenant, 
+  COUNT(*) as order_count 
+FROM tenant1_orders
+UNION ALL
+SELECT 
+  'tenant2' as tenant, 
+  COUNT(*) as order_count 
+FROM tenant2_orders;
+```
+
+### MariaDB Support
+
+The MySQL connector works seamlessly with MariaDB:
+
+```yaml
+datasets:
+  - from: mysql:production.events
+    name: events
+    params:
+      mysql_host: mariadb.example.com
+      mysql_tcp_port: 3306
+      mysql_db: production
+      mysql_user: spice
+      mysql_pass: ${secrets:mariadb_password}
+      mysql_sslmode: required
+```
+
+## Performance Tips
+
+1. **Connection Pooling**: Adjust pool size based on query concurrency
+2. **Query Push-down**: Spice pushes filters and aggregations to MySQL automatically
+3. **Acceleration**: Essential for large tables (>1M rows) to achieve fast queries
+4. **Indexes**: Ensure MySQL tables have proper indexes for common queries
+5. **Batch Queries**: Use YAML anchors to configure multiple tables efficiently
+
+## Data Type Mapping
+
+MySQL types are automatically mapped to Arrow types:
+
+- `INT`, `BIGINT` → `Int32`, `Int64`
+- `VARCHAR`, `TEXT` → `Utf8`
+- `DECIMAL` → `Decimal128`
+- `TIMESTAMP`, `DATETIME` → `Timestamp`
+- `JSON` → `Utf8` (parsed as string)
+
+## Limitations
+
+- Write operations are not currently supported (read-only)
+- MySQL 5.7+ recommended for best compatibility
+- Very large result sets may require pagination
+- Stored procedures are not supported
+
+## Related Resources
+
+- [MySQL Documentation](https://dev.mysql.com/doc/)
+- [MariaDB Documentation](https://mariadb.com/kb/en/documentation/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)

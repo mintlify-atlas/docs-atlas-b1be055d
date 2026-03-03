@@ -1,0 +1,292 @@
+---
+title: 'Arrow Accelerator'
+description: 'In-memory columnar acceleration with Apache Arrow'
+---
+
+The Arrow accelerator provides blazing-fast in-memory data acceleration using Apache Arrow's columnar format. It's optimized for analytical queries with aggregations, scans, and vectorized operations.
+
+## When to Use Arrow
+
+- **In-memory datasets**: Data fits in available RAM
+- **Analytical workloads**: Aggregations, scans, joins
+- **Maximum speed**: Fastest query performance
+- **Simple refresh**: Full table replacement on refresh
+
+## Configuration
+
+### Basic Setup
+
+```yaml
+datasets:
+  - name: metrics
+    from: s3://data-lake/metrics/
+    acceleration:
+      enabled: true
+      engine: arrow
+```
+
+### Memory Mode Only
+
+Arrow only supports memory mode. Data is stored in RAM and lost on restart.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  mode: memory
+```
+
+### With Refresh Interval
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  refresh_mode: full
+  refresh_interval: 10m
+```
+
+## Performance Features
+
+### SIMD Acceleration
+
+Arrow uses SIMD (Single Instruction Multiple Data) instructions for vectorized operations:
+
+- **arm64** (Apple Silicon, Graviton): NEON SIMD
+- **amd64** (Intel/AMD): AVX2/AVX-512 when available
+- Automatic CPU detection and optimization
+
+### Zero-Copy Operations
+
+Arrow's columnar layout enables:
+
+- Zero-copy reads from memory
+- Efficient column projection (only load needed columns)
+- Fast filtering with bitmap operations
+
+### Hash Index
+
+Enable hash index for fast primary key lookups:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  primary_key: id
+  params:
+    hash_index: enabled
+```
+
+Requires `primary_key` configuration. Provides O(1) point query performance.
+
+## Sort Columns
+
+Sort data by one or more columns during inserts for better query performance:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  params:
+    sort_columns: timestamp,user_id
+```
+
+Benefits:
+- Faster range queries on sorted columns
+- Improved filter pushdown
+- Better compression
+
+## Primary Keys and Constraints
+
+### Primary Key Configuration
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  primary_key: id
+```
+
+### Composite Primary Key
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  primary_key:
+    - customer_id
+    - order_id
+```
+
+### Upsert Behavior
+
+With primary keys, Arrow performs upserts (insert or update):
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  primary_key: id
+  on_conflict: upsert
+```
+
+## Refresh Modes
+
+### Full Refresh
+
+Replaces all data on each refresh:
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  refresh_mode: full
+  refresh_interval: 1h
+```
+
+### Caching Mode
+
+For query result caching (Arrow automatically strips primary key constraints in caching mode):
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  refresh_mode: caching
+  refresh_interval: 10s
+```
+
+## Memory Management
+
+### Estimating Memory Usage
+
+Arrow stores data in columnar format. Memory usage depends on:
+
+- Number of rows
+- Column data types
+- String/binary data size
+- Null values (stored as bitmaps)
+
+Example calculation for 1M rows:
+
+```
+Columns:
+- id (Int64): 8 bytes × 1M = 8 MB
+- name (String): ~50 bytes avg × 1M = 50 MB
+- amount (Float64): 8 bytes × 1M = 8 MB
+Total: ~66 MB (plus metadata overhead)
+```
+
+### Memory Limits
+
+Arrow allocations are limited by available system memory. Monitor with:
+
+```sql
+SELECT * FROM runtime.metrics WHERE name = 'acceleration_memory_bytes';
+```
+
+## Limitations
+
+- **No file mode**: Data doesn't persist across restarts
+- **Memory bound**: Dataset must fit in RAM
+- **Full refresh only**: No incremental append mode
+- **No snapshots**: Cannot bootstrap from S3 snapshots
+
+## Performance Characteristics
+
+### Query Performance
+
+| Operation      | Performance | Notes                           |
+|----------------|-------------|---------------------------------|
+| Full table scan| Excellent   | SIMD-accelerated                |
+| Aggregations   | Excellent   | Vectorized operations           |
+| Point queries  | Good        | Excellent with hash index       |
+| Joins          | Excellent   | In-memory hash joins            |
+| Sorting        | Good        | Use sort_columns for pre-sorted |
+
+### Write Performance
+
+| Operation | Performance | Notes                    |
+|-----------|-------------|---------------------------|
+| Insert    | Excellent   | Batch inserts preferred  |
+| Update    | Good        | With primary key         |
+| Delete    | Good        | Bitmap-based removal     |
+| Upsert    | Good        | Requires primary key     |
+
+## Example Configurations
+
+### Time-Series Data
+
+```yaml
+datasets:
+  - name: sensor_readings
+    from: s3://iot/sensors/
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_mode: full
+      refresh_interval: 5m
+      params:
+        sort_columns: timestamp,sensor_id
+```
+
+### Lookup Table
+
+```yaml
+datasets:
+  - name: product_catalog
+    from: postgres://db/products
+    acceleration:
+      enabled: true
+      engine: arrow
+      primary_key: product_id
+      params:
+        hash_index: enabled
+      refresh_interval: 1h
+```
+
+### Analytics Dashboard
+
+```yaml
+datasets:
+  - name: daily_metrics
+    from: snowflake://warehouse/metrics
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_mode: full
+      refresh_interval: 10m
+```
+
+## Monitoring
+
+Monitor Arrow acceleration with system metrics:
+
+```sql
+-- Memory usage
+SELECT 
+  dataset_name,
+  memory_bytes / 1024 / 1024 as memory_mb
+FROM runtime.metrics
+WHERE name = 'acceleration_memory_bytes';
+
+-- Row count
+SELECT 
+  dataset_name,
+  value as row_count
+FROM runtime.metrics
+WHERE name = 'acceleration_rows';
+```
+
+## Parameters
+
+| Parameter      | Type   | Description                                    | Default |
+|----------------|--------|------------------------------------------------|---------|
+| hash_index     | string | Enable hash index for primary key lookups     | disabled|
+| sort_columns   | string | Comma-separated columns to sort by on insert  | -       |
+
+## Next Steps
+
+- [DuckDB Accelerator](/accelerators/duckdb) - For larger datasets that don't fit in memory
+- [Cayenne Accelerator](/accelerators/cayenne) - For append-heavy workloads
+- [Acceleration Overview](/accelerators/overview) - Compare all accelerators

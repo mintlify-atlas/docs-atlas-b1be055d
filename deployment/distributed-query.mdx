@@ -1,0 +1,414 @@
+---
+title: 'Distributed Query Execution'
+description: 'Scale query processing across multiple nodes with Apache Ballista'
+---
+
+## Overview
+
+Spice.ai supports multi-node distributed query execution using Apache Ballista integration. This enables horizontal scaling of query processing for large datasets and compute-intensive workloads.
+
+## Architecture
+
+Distributed query execution in Spice uses a scheduler-executor model:
+
+- **Scheduler Node**: Coordinates query planning and task distribution
+- **Executor Nodes**: Execute query tasks on partitioned data
+
+Queries submitted to the scheduler are broken into tasks, distributed to executors, and results are aggregated.
+
+```
+┌─────────────┐
+│   Client    │
+└──────┬──────┘
+       │ Submit query
+       ▼
+┌─────────────┐
+│  Scheduler  │  (Query planning & coordination)
+└──────┬──────┘
+       │ Distribute tasks
+       ├──────────────┬──────────────┐
+       ▼              ▼              ▼
+┌──────────┐   ┌──────────┐   ┌──────────┐
+│Executor 1│   │Executor 2│   │Executor 3│
+└────┬─────┘   └────┬─────┘   └────┬─────┘
+     │              │              │
+     └──────────────┴──────────────┘
+                    │
+             Aggregate results
+```
+
+## Deployment
+
+### Scheduler Node
+
+Deploy a scheduler node using the `--role scheduler` flag:
+
+```bash
+spiced \
+  --http 0.0.0.0:8090 \
+  --flight 0.0.0.0:50051 \
+  --metrics 0.0.0.0:9090 \
+  --role scheduler \
+  --node-bind-address 0.0.0.0:50052
+```
+
+Key arguments:
+- `--role scheduler`: Sets node role to scheduler
+- `--node-bind-address`: Internal gRPC address for cluster communication (default: `0.0.0.0:50052`)
+
+### Executor Nodes
+
+Deploy executor nodes that connect to the scheduler:
+
+```bash
+spiced \
+  --http 0.0.0.0:8090 \
+  --flight 0.0.0.0:50051 \
+  --metrics 0.0.0.0:9090 \
+  --role executor \
+  --scheduler-address https://scheduler.example.com:50052 \
+  --node-bind-address 0.0.0.0:50052 \
+  --node-advertise-address executor-1.example.com
+```
+
+Key arguments:
+- `--role executor`: Sets node role to executor
+- `--scheduler-address`: URL of the scheduler's internal gRPC service
+- `--node-advertise-address`: Hostname/IP that this executor advertises to the scheduler
+
+## Security: mTLS Configuration
+
+Cluster communication should use mutual TLS (mTLS) in production:
+
+### Generate Certificates
+
+```bash
+# Generate CA
+openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
+  -keyout ca-key.pem -out ca-cert.pem \
+  -subj "/CN=Spice Cluster CA"
+
+# Generate scheduler certificate
+openssl req -newkey rsa:4096 -nodes \
+  -keyout scheduler-key.pem -out scheduler-req.pem \
+  -subj "/CN=scheduler.example.com"
+
+openssl x509 -req -in scheduler-req.pem -CA ca-cert.pem \
+  -CAkey ca-key.pem -CAcreateserial -out scheduler-cert.pem -days 365
+
+# Generate executor certificate (repeat for each executor)
+openssl req -newkey rsa:4096 -nodes \
+  -keyout executor-key.pem -out executor-req.pem \
+  -subj "/CN=executor-1.example.com"
+
+openssl x509 -req -in executor-req.pem -CA ca-cert.pem \
+  -CAkey ca-key.pem -CAcreateserial -out executor-cert.pem -days 365
+```
+
+### Scheduler with mTLS
+
+```bash
+spiced \
+  --http 0.0.0.0:8090 \
+  --flight 0.0.0.0:50051 \
+  --role scheduler \
+  --node-bind-address 0.0.0.0:50052 \
+  --node-mtls-ca-certificate-file ca-cert.pem \
+  --node-mtls-certificate-file scheduler-cert.pem \
+  --node-mtls-key-file scheduler-key.pem
+```
+
+### Executor with mTLS
+
+```bash
+spiced \
+  --http 0.0.0.0:8090 \
+  --flight 0.0.0.0:50051 \
+  --role executor \
+  --scheduler-address https://scheduler.example.com:50052 \
+  --node-bind-address 0.0.0.0:50052 \
+  --node-advertise-address executor-1.example.com \
+  --node-mtls-ca-certificate-file ca-cert.pem \
+  --node-mtls-certificate-file executor-cert.pem \
+  --node-mtls-key-file executor-key.pem
+```
+
+## Kubernetes Deployment
+
+Deploy a distributed cluster on Kubernetes:
+
+### Scheduler Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spice-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spice-scheduler
+  template:
+    metadata:
+      labels:
+        app: spice-scheduler
+    spec:
+      containers:
+        - name: spiceai
+          image: spiceai/spiceai:latest
+          command:
+            - /usr/local/bin/spiced
+            - --http
+            - 0.0.0.0:8090
+            - --flight
+            - 0.0.0.0:50051
+            - --metrics
+            - 0.0.0.0:9090
+            - --role
+            - scheduler
+            - --node-bind-address
+            - 0.0.0.0:50052
+            - --node-advertise-address
+            - spice-scheduler.default.svc.cluster.local
+            - --node-mtls-ca-certificate-file
+            - /certs/ca-cert.pem
+            - --node-mtls-certificate-file
+            - /certs/scheduler-cert.pem
+            - --node-mtls-key-file
+            - /certs/scheduler-key.pem
+          ports:
+            - containerPort: 8090
+              name: http
+            - containerPort: 50051
+              name: flight
+            - containerPort: 9090
+              name: metrics
+            - containerPort: 50052
+              name: cluster
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: spicepod
+              mountPath: /app/spicepod.yaml
+              subPath: spicepod.yaml
+      volumes:
+        - name: certs
+          secret:
+            secretName: cluster-certs
+        - name: spicepod
+          configMap:
+            name: spice-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spice-scheduler
+spec:
+  selector:
+    app: spice-scheduler
+  ports:
+    - port: 8090
+      name: http
+    - port: 50051
+      name: flight
+    - port: 9090
+      name: metrics
+    - port: 50052
+      name: cluster
+```
+
+### Executor StatefulSet
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spice-executor
+spec:
+  serviceName: spice-executor
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spice-executor
+  template:
+    metadata:
+      labels:
+        app: spice-executor
+    spec:
+      containers:
+        - name: spiceai
+          image: spiceai/spiceai:latest
+          command:
+            - /usr/local/bin/spiced
+            - --http
+            - 0.0.0.0:8090
+            - --flight
+            - 0.0.0.0:50051
+            - --metrics
+            - 0.0.0.0:9090
+            - --role
+            - executor
+            - --scheduler-address
+            - https://spice-scheduler.default.svc.cluster.local:50052
+            - --node-bind-address
+            - 0.0.0.0:50052
+            - --node-mtls-ca-certificate-file
+            - /certs/ca-cert.pem
+            - --node-mtls-certificate-file
+            - /certs/executor-cert.pem
+            - --node-mtls-key-file
+            - /certs/executor-key.pem
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_ADVERTISE_ADDRESS
+              value: "$(POD_NAME).spice-executor.default.svc.cluster.local"
+          ports:
+            - containerPort: 8090
+              name: http
+            - containerPort: 50051
+              name: flight
+            - containerPort: 9090
+              name: metrics
+            - containerPort: 50052
+              name: cluster
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: spicepod
+              mountPath: /app/spicepod.yaml
+              subPath: spicepod.yaml
+      volumes:
+        - name: certs
+          secret:
+            secretName: cluster-certs
+        - name: spicepod
+          configMap:
+            name: spice-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spice-executor
+spec:
+  clusterIP: None
+  selector:
+    app: spice-executor
+  ports:
+    - port: 50052
+      name: cluster
+```
+
+### Create Certificates Secret
+
+```bash
+kubectl create secret generic cluster-certs \
+  --from-file=ca-cert.pem=ca-cert.pem \
+  --from-file=scheduler-cert.pem=scheduler-cert.pem \
+  --from-file=scheduler-key.pem=scheduler-key.pem \
+  --from-file=executor-cert.pem=executor-cert.pem \
+  --from-file=executor-key.pem=executor-key.pem
+```
+
+## Query Execution
+
+Once the cluster is running, queries submitted to the scheduler are automatically distributed:
+
+```bash
+# Query via HTTP
+curl -X POST http://scheduler-host:8090/v1/sql \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT COUNT(*) FROM large_dataset"}'
+
+# Query via Flight SQL
+spice sql --repl
+```
+
+The scheduler:
+1. Parses and optimizes the query plan
+2. Partitions the plan into executable tasks
+3. Distributes tasks to available executors
+4. Aggregates results from executors
+5. Returns final result to client
+
+## Monitoring Distributed Queries
+
+Monitor cluster health and query execution:
+
+```bash
+# Check cluster metrics
+curl http://scheduler-host:9090/metrics?scope=cluster
+
+# View active executors
+curl http://scheduler-host:8090/v1/status
+```
+
+Metrics include:
+- Active executor count
+- Task distribution across executors
+- Query execution time per executor
+- Data shuffle statistics
+
+## Data Partitioning
+
+For optimal distributed query performance, partition datasets appropriately:
+
+```yaml
+datasets:
+  - from: s3://large-bucket/data/
+    name: large_dataset
+    acceleration:
+      enabled: true
+      engine: arrow
+    params:
+      file_format: parquet
+      # Ensure data is pre-partitioned in S3
+      partition_cols:
+        - year
+        - month
+```
+
+Executors can read partitioned data in parallel, improving query performance.
+
+## Best Practices
+
+1. **Use mTLS in production**: Always secure cluster communication with mutual TLS
+2. **Scale executors horizontally**: Add more executors for increased query throughput
+3. **Partition large datasets**: Pre-partition data for parallel processing
+4. **Monitor resource usage**: Track CPU, memory, and network metrics per executor
+5. **Co-locate with data**: Deploy executors close to data sources to minimize network latency
+6. **Use persistent storage**: Mount volumes for file-based accelerators (DuckDB, Cayenne)
+
+## Limitations
+
+- Single scheduler (high availability requires external orchestration)
+- Executors must have network connectivity to scheduler and each other
+- Data shuffle requires inter-executor communication
+- Not all queries benefit from distribution (OLTP workloads with small datasets)
+
+## Development Mode
+
+For testing without mTLS:
+
+```bash
+# Scheduler (insecure - development only)
+spiced --role scheduler --allow-insecure-connections
+
+# Executor (insecure - development only)
+spiced --role executor \
+  --scheduler-address http://localhost:50052 \
+  --allow-insecure-connections
+```
+
+**WARNING**: `--allow-insecure-connections` disables authentication. Never use in production.
+
+## Next Steps
+
+- [Configuration](/deployment/configuration) - Configure runtime behavior
+- [Monitoring](/deployment/monitoring) - Set up observability for distributed clusters
+- [Kubernetes Deployment](/deployment/kubernetes) - Deploy to Kubernetes

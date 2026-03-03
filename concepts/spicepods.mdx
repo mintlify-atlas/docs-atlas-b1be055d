@@ -1,0 +1,774 @@
+---
+title: 'Spicepods'
+description: 'Understanding the Spicepod configuration format'
+---
+
+## What is a Spicepod?
+
+A **Spicepod** is a YAML configuration file (`spicepod.yaml`) that defines your Spice application. It describes:
+
+- **Datasets**: Data sources to query or accelerate
+- **Models**: LLM and ML models for inference
+- **Embeddings**: Embedding models for vector search
+- **Views**: SQL views over datasets
+- **Catalogs**: External catalog connections
+- **Runtime**: Runtime configuration (caching, parameters, distributed)
+- **Secrets**: Secret store configurations
+- **Tools**: MCP tool integrations
+- **Evals**: Model and data evaluations
+
+Think of a Spicepod as a declarative manifest for your data and AI infrastructure.
+
+## Basic Structure
+
+```yaml spicepod.yaml
+version: v2
+kind: Spicepod
+name: my_app
+
+runtime:
+  # Runtime configuration
+
+datasets:
+  # Data sources
+
+models:
+  # LLM/ML models
+
+embeddings:
+  # Embedding models
+
+views:
+  # SQL views
+```
+
+## Complete Example
+
+Here's the real `spicepod.yaml` from the Spice repository:
+
+```yaml
+version: v2
+kind: Spicepod
+name: spiceai
+
+runtime:
+  caching:
+    sql_results:
+      enabled: true
+      item_ttl: 5s
+  params:
+    github_max_concurrent_connections: 5
+  dataset_load_parallelism: 1
+
+datasets:
+  # GitHub stargazers with append-only refresh
+  - from: github:github.com/spiceai/spiceai/stargazers
+    name: stargazers
+    description: github.com/spiceai/spiceai GitHub Stargazers
+    time_column: starred_at
+    time_format: timestamp
+    params: &github_params
+      github_client_id: ${secrets:GITHUB_CLIENT_ID}
+      github_private_key: ${secrets:GITHUB_PRIVATE_KEY}
+      github_installation_id: ${secrets:GITHUB_INSTALLATION_ID}
+    acceleration: &github_acceleration
+      enabled: true
+      engine: duckdb
+      refresh_mode: append
+      refresh_append_overlap: 5m
+      refresh_check_interval: 1h
+      refresh_jitter_enabled: true
+      refresh_jitter_max: 5m
+
+  # CSV file from GitHub
+  - from: https://raw.githubusercontent.com/spiceai/spiceai/refs/heads/trunk/docs/release_notes/qa_analytics.csv
+    name: qa_analytics
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_check_interval: 1d
+
+  # GitHub issues
+  - from: github:github.com/spiceai/spiceai/issues
+    name: issues
+    description: github.com/spiceai/spiceai GitHub Issues
+    params: *github_params
+    time_column: updated_at
+    time_format: timestamp
+    acceleration: *github_acceleration
+
+  # GitHub pull requests with comments
+  - from: github:github.com/spiceai/spiceai/pulls
+    name: pulls
+    params:
+      github_client_id: ${secrets:GITHUB_CLIENT_ID}
+      github_private_key: ${secrets:GITHUB_PRIVATE_KEY}
+      github_installation_id: ${secrets:GITHUB_INSTALLATION_ID}
+      github_include_comments: all
+    time_column: updated_at
+    time_format: timestamp
+    acceleration: *github_acceleration
+```
+
+**Key features demonstrated:**
+
+- YAML anchors (`&github_params`, `*github_params`) for reusing config
+- Secret references (`${secrets:GITHUB_CLIENT_ID}`)
+- Time-series configuration (`time_column`, `time_format`)
+- Append-mode acceleration with overlap and jitter
+- Multiple dataset types (GitHub API, CSV from URL)
+
+## Spicepod Sections
+
+### Version and Metadata
+
+```yaml
+version: v2        # Spicepod schema version (v1 or v2)
+kind: Spicepod     # Always "Spicepod"
+name: my_app       # Application name
+
+metadata:          # Optional custom metadata
+  author: "Your Name"
+  description: "My Spice application"
+```
+
+### Runtime Configuration
+
+```yaml
+runtime:
+  caching:
+    sql_results:
+      enabled: true
+      item_ttl: 5s           # Cache query results for 5 seconds
+      max_size: 128MiB       # Max cache size
+  
+  params:
+    # Global runtime parameters
+    github_max_concurrent_connections: 5
+  
+  dataset_load_parallelism: 4  # Load datasets in parallel
+  
+  distributed:
+    enabled: true
+    workers: 4  # Multi-node query execution
+```
+
+See [Architecture](/concepts/architecture) for runtime details.
+
+### Datasets
+
+```yaml
+datasets:
+  - from: postgres:public.orders
+    name: orders
+    description: Order transaction data
+    
+    # Connection parameters
+    params:
+      pg_host: localhost
+      pg_port: 5432
+      pg_db: ecommerce
+      pg_user: ${secrets:pg_user}
+      pg_pass: ${secrets:pg_pass}
+    
+    # Time-series configuration
+    time_column: order_date
+    time_format: timestamp
+    
+    # Acceleration
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_mode: append
+      refresh_check_interval: 5m
+      indexes:
+        customer_id: enabled
+      primary_key: order_id
+    
+    # Embeddings for search
+    columns:
+      - name: description
+        embeddings:
+          - from: openai
+            model: text-embedding-3-small
+            row_ids:
+              - order_id
+    
+    # Vector store
+    vectors:
+      store: s3_vectors
+      params:
+        s3_vectors_bucket: order-vectors
+```
+
+**Key fields:**
+
+- `from`: Data source (format: `connector:path`)
+- `name`: Table name in Spice
+- `params`: Connector-specific parameters
+- `acceleration`: Local materialization config
+- `columns`: Column-specific config (embeddings, search)
+- `vectors`: Vector storage for search
+
+See [Data Federation](/concepts/data-federation) and [Data Acceleration](/concepts/data-acceleration).
+
+### Models
+
+```yaml
+models:
+  # Hosted model
+  - from: openai
+    name: gpt-4o
+    params:
+      openai_api_key: ${secrets:openai_key}
+  
+  # Local model with GPU acceleration
+  - from: file
+    name: llama-3.1-8b-instruct
+    files:
+      - path: /models/llama-3.1-8b-instruct-q4.gguf
+    params:
+      llm_context_length: 8192
+      llm_n_gpu_layers: 35
+  
+  # HuggingFace model
+  - from: huggingface
+    name: meta-llama/Llama-3.1-8B-Instruct
+    params:
+      huggingface_token: ${secrets:hf_token}
+```
+
+See [AI Inference](/concepts/ai-inference).
+
+### Embeddings
+
+```yaml
+embeddings:
+  - from: openai
+    name: text-embedding-3-small
+    params:
+      openai_api_key: ${secrets:openai_key}
+  
+  - from: bedrock
+    name: amazon.titan-embed-text-v1
+    params:
+      aws_region: us-east-1
+      aws_access_key_id: ${secrets:aws_key}
+      aws_secret_access_key: ${secrets:aws_secret}
+  
+  - from: model2vec
+    name: minishlab/M2V_base_output
+```
+
+See [Search](/concepts/search).
+
+### Views
+
+Define SQL views over datasets:
+
+```yaml
+views:
+  - name: recent_orders
+    sql: |
+      SELECT 
+        o.order_id,
+        o.customer_id,
+        c.customer_name,
+        o.total,
+        o.order_date
+      FROM orders o
+      JOIN customers c ON o.customer_id = c.id
+      WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
+    
+    dependsOn:
+      - orders
+      - customers
+```
+
+**Query like a table:**
+
+```sql
+SELECT * FROM recent_orders WHERE total > 100;
+```
+
+### Catalogs
+
+Connect to external catalogs:
+
+```yaml
+catalogs:
+  - from: unity_catalog
+    name: databricks_catalog
+    params:
+      unity_catalog_url: https://my-workspace.cloud.databricks.com
+      databricks_token: ${secrets:databricks_token}
+  
+  - from: iceberg
+    name: iceberg_catalog
+    params:
+      iceberg_catalog_uri: http://iceberg-rest:8181
+```
+
+**Query catalog tables:**
+
+```sql
+SHOW TABLES FROM databricks_catalog.production;
+
+SELECT * FROM databricks_catalog.production.sales;
+```
+
+See [Data Federation](/concepts/data-federation).
+
+### Secrets
+
+Configure secret stores:
+
+```yaml
+secrets:
+  # Environment variables (default)
+  - from: env
+    name: env
+  
+  # AWS Secrets Manager
+  - from: aws_secrets_manager
+    name: aws
+    params:
+      aws_region: us-east-1
+  
+  # Kubernetes secrets
+  - from: kubernetes
+    name: k8s
+```
+
+**Use secrets:**
+
+```yaml
+params:
+  pg_user: ${secrets:POSTGRES_USER}       # From env
+  api_key: ${secrets:aws:prod/api_key}    # From AWS Secrets Manager
+```
+
+### Snapshots
+
+Configure acceleration snapshots:
+
+```yaml
+snapshots:
+  from: s3://my-bucket/snapshots
+  params:
+    aws_region: us-east-1
+    aws_access_key_id: ${secrets:aws_key}
+    aws_secret_access_key: ${secrets:aws_secret}
+```
+
+**Enable per dataset:**
+
+```yaml
+datasets:
+  - name: large_dataset
+    acceleration:
+      enabled: true
+      snapshots: enabled  # Bootstrap from/create snapshots
+```
+
+See [Data Acceleration](/concepts/data-acceleration).
+
+### Dependencies
+
+Include other Spicepods:
+
+```yaml
+dependencies:
+  - spiceai/quickstart
+  - github.com/myorg/shared-datasets
+```
+
+Dependencies are resolved from:
+
+1. Spicerack registry (https://spicerack.org)
+2. GitHub repositories
+3. Local file paths
+
+**Example:**
+
+```bash
+spice add spiceai/quickstart
+```
+
+Adds the `spiceai/quickstart` Spicepod as a dependency.
+
+### Tools (MCP)
+
+Model Context Protocol integrations:
+
+```yaml
+tools:
+  - from: mcp
+    name: weather_api
+    params:
+      mcp_endpoint: http://weather-service:8080/mcp
+  
+  - from: mcp
+    name: database_tools
+    params:
+      mcp_endpoint: http://db-tools:8080/mcp
+```
+
+See [AI Inference](/concepts/ai-inference).
+
+### Evaluations
+
+```yaml
+evals:
+  - name: rag_accuracy
+    from: dataset:qa_test_set
+    type: llm_graded
+    params:
+      judge_model: gpt-4o
+      criteria: accuracy
+      
+  - name: data_quality
+    from: dataset:prod_data
+    type: data_quality
+    params:
+      rules:
+        - column: email
+          type: email_format
+```
+
+## Advanced Features
+
+### YAML Anchors for Reuse
+
+Avoid repetition with YAML anchors:
+
+```yaml
+datasets:
+  - from: postgres:public.orders
+    name: orders
+    params: &pg_params
+      pg_host: localhost
+      pg_port: 5432
+      pg_user: ${secrets:pg_user}
+      pg_pass: ${secrets:pg_pass}
+    acceleration: &pg_acceleration
+      enabled: true
+      engine: duckdb
+      refresh_check_interval: 5m
+  
+  - from: postgres:public.customers
+    name: customers
+    params: *pg_params        # Reuse params
+    acceleration: *pg_acceleration  # Reuse acceleration config
+```
+
+### Access Modes
+
+Control dataset access:
+
+```yaml
+datasets:
+  - name: readonly_data
+    access: ro  # Read-only (default)
+  
+  - name: writable_data
+    access: rw  # Read-write (enables INSERT, UPDATE, DELETE)
+```
+
+### Unsupported Type Handling
+
+Handle unsupported data types:
+
+```yaml
+datasets:
+  - name: mixed_types
+    unsupported_type_action: string  # Convert to string
+    # Options: error, warn, ignore, string
+```
+
+### Ready State
+
+Control when dataset becomes queryable:
+
+```yaml
+datasets:
+  - name: critical_data
+    ready_state: on_load  # Wait for initial load (default)
+  
+  - name: optional_data
+    ready_state: on_registration  # Available immediately, fallback to source
+```
+
+### Partitioning
+
+Partition accelerated data:
+
+```yaml
+acceleration:
+  enabled: true
+  partition_by:
+    - year(order_date)
+    - region
+```
+
+Enables partition pruning for better performance.
+
+### Replication
+
+Enable dataset replication:
+
+```yaml
+datasets:
+  - name: replicated_data
+    replication:
+      enabled: true
+```
+
+## Spicepod Lifecycle
+
+### 1. Initialize
+
+```bash
+spice init my_app
+cd my_app
+```
+
+Creates a blank `spicepod.yaml`:
+
+```yaml
+version: v2
+kind: Spicepod
+name: my_app
+```
+
+### 2. Configure
+
+Edit `spicepod.yaml` to add datasets, models, etc.
+
+### 3. Run
+
+```bash
+spice run
+```
+
+Spice runtime:
+
+1. Parses `spicepod.yaml`
+2. Registers datasets
+3. Loads models
+4. Starts acceleration refreshes
+5. Serves APIs (HTTP, Flight, ODBC, etc.)
+
+### 4. Query
+
+```bash
+spice sql
+```
+
+Interactive SQL REPL to query your datasets.
+
+## Configuration Best Practices
+
+1. **Use secrets**: Never hardcode credentials
+2. **YAML anchors**: Reduce duplication
+3. **Descriptive names**: Use clear dataset/model names
+4. **Comments**: Document complex configurations
+5. **Version control**: Track `spicepod.yaml` in git (exclude `.env`)
+6. **Modular**: Use dependencies for shared configs
+7. **Start simple**: Add complexity incrementally
+8. **Test locally**: Validate before deploying
+
+## Spicepod vs. Traditional Config
+
+| Traditional Config | Spicepod |
+|-------------------|----------|
+| Database connection strings | Declarative dataset definitions |
+| Manual schema management | Automatic schema inference |
+| Separate model serving | Unified data + AI config |
+| Code-based pipelines | YAML-based orchestration |
+| Scattered configs | Single source of truth |
+
+## CLI Commands
+
+```bash
+# Initialize new Spicepod
+spice init my_app
+
+# Add dependency
+spice add spiceai/quickstart
+
+# Configure dataset interactively
+spice dataset configure
+
+# Run runtime
+spice run
+
+# SQL REPL
+spice sql
+
+# Validate Spicepod
+spice validate
+
+# Login to Spice.ai Cloud
+spice login
+```
+
+## Schema Validation
+
+Spicepods have a JSON schema for validation:
+
+```bash
+# Validate your spicepod.yaml
+spice validate
+```
+
+IDEs with YAML LSP support can provide autocomplete and validation.
+
+## Example: Full-Stack Application
+
+```yaml spicepod.yaml
+version: v2
+kind: Spicepod
+name: ecommerce_app
+
+runtime:
+  caching:
+    sql_results:
+      enabled: true
+      item_ttl: 10s
+  distributed:
+    enabled: true
+    workers: 2
+
+snapshots:
+  from: s3://my-snapshots/ecommerce
+  params:
+    aws_region: us-east-1
+
+secrets:
+  - from: env
+    name: env
+  - from: aws_secrets_manager
+    name: aws
+    params:
+      aws_region: us-east-1
+
+datasets:
+  # Operational database
+  - from: postgres:public.orders
+    name: orders
+    params:
+      pg_host: ${secrets:aws:prod/pg_host}
+      pg_db: ecommerce
+      pg_user: ${secrets:aws:prod/pg_user}
+      pg_pass: ${secrets:aws:prod/pg_pass}
+    time_column: order_date
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_mode: append
+      refresh_check_interval: 1m
+      snapshots: enabled
+      primary_key: order_id
+  
+  # Data warehouse
+  - from: snowflake:analytics.customer_ltv
+    name: customer_ltv
+    params:
+      snowflake_account: ${secrets:aws:prod/sf_account}
+      snowflake_warehouse: analytics_wh
+      snowflake_username: ${secrets:aws:prod/sf_user}
+      snowflake_password: ${secrets:aws:prod/sf_pass}
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_check_interval: 1h
+  
+  # Product catalog with search
+  - from: postgres:public.products
+    name: products
+    acceleration:
+      enabled: true
+      engine: sqlite
+      indexes:
+        category: enabled
+        brand: enabled
+    columns:
+      - name: description
+        embeddings:
+          - from: openai
+            model: text-embedding-3-small
+            row_ids:
+              - product_id
+        full_text_search:
+          enabled: true
+          row_ids:
+            - product_id
+    vectors:
+      store: s3_vectors
+      params:
+        s3_vectors_bucket: product-vectors
+
+views:
+  - name: order_summary
+    sql: |
+      SELECT 
+        o.order_id,
+        o.customer_id,
+        o.total,
+        c.ltv,
+        o.order_date
+      FROM orders o
+      LEFT JOIN customer_ltv c ON o.customer_id = c.customer_id
+    dependsOn:
+      - orders
+      - customer_ltv
+
+models:
+  - from: openai
+    name: gpt-4o-mini
+    params:
+      openai_api_key: ${secrets:OPENAI_API_KEY}
+  
+  - from: file
+    name: llama-3.1-8b-instruct
+    files:
+      - path: /models/llama-3.1-8b.gguf
+    params:
+      llm_n_gpu_layers: 35
+
+embeddings:
+  - from: openai
+    name: text-embedding-3-small
+    params:
+      openai_api_key: ${secrets:OPENAI_API_KEY}
+```
+
+**This Spicepod provides:**
+
+- Federated query across Postgres + Snowflake
+- Local acceleration with snapshots
+- Hybrid search on products (vector + keyword)
+- LLM inference (OpenAI + local Llama)
+- SQL views for analytics
+- Distributed query execution
+- Results caching
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how Spice works
+  </Card>
+  <Card title="Data Federation" icon="network-wired" href="/concepts/data-federation">
+    Query multiple data sources
+  </Card>
+  <Card title="Data Acceleration" icon="gauge-high" href="/concepts/data-acceleration">
+    Materialize data locally
+  </Card>
+  <Card title="Spicepod Reference" icon="book" href="/reference/spicepod">
+    Complete YAML schema reference
+  </Card>
+</CardGroup>

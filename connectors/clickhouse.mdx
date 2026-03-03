@@ -1,0 +1,346 @@
+---
+title: 'ClickHouse Data Connector'
+description: 'Connect Spice to ClickHouse databases for real-time analytics'
+---
+
+The ClickHouse connector enables Spice to query ClickHouse databases with SQL push-down support for real-time analytical workloads.
+
+## Status
+
+**Alpha** - Early access with ongoing development
+
+## Supported Features
+
+- SQL query push-down
+- Connection pooling
+- Native ClickHouse protocol
+- Data acceleration
+- Schema introspection
+- High-performance analytical queries
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: clickhouse-demo
+
+datasets:
+  - from: clickhouse:my_table
+    name: my_table
+    params:
+      clickhouse_host: localhost
+      clickhouse_tcp_port: 9000
+      clickhouse_db: default
+      clickhouse_user: default
+      clickhouse_pass: ${secrets:clickhouse_password}
+```
+
+### With SSL/TLS
+
+```yaml
+datasets:
+  - from: clickhouse:events
+    name: events
+    params:
+      clickhouse_host: clickhouse.example.com
+      clickhouse_tcp_port: 9440
+      clickhouse_db: analytics
+      clickhouse_user: app_user
+      clickhouse_pass: ${secrets:clickhouse_password}
+      clickhouse_secure: true
+```
+
+### With Data Acceleration
+
+```yaml
+datasets:
+  - from: clickhouse:metrics.system_logs
+    name: system_logs
+    params:
+      clickhouse_host: ${env:CLICKHOUSE_HOST}
+      clickhouse_tcp_port: 9000
+      clickhouse_db: logs
+      clickhouse_user: reader
+      clickhouse_pass: ${secrets:clickhouse_password}
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 30s
+```
+
+### With Connection Pool
+
+```yaml
+datasets:
+  - from: clickhouse:analytics.user_events
+    name: user_events
+    params:
+      clickhouse_host: clickhouse-cluster.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: analytics
+      clickhouse_user: spice
+      clickhouse_pass: ${secrets:clickhouse_password}
+      connection_pool_size: 20
+```
+
+## Parameters
+
+<ParamField path="clickhouse_host" type="string" required>
+  ClickHouse server hostname or IP address
+</ParamField>
+
+<ParamField path="clickhouse_tcp_port" type="integer" default="9000">
+  ClickHouse native protocol port (9000 for non-SSL, 9440 for SSL)
+</ParamField>
+
+<ParamField path="clickhouse_db" type="string" required>
+  Database name
+</ParamField>
+
+<ParamField path="clickhouse_user" type="string" required>
+  Database user
+</ParamField>
+
+<ParamField path="clickhouse_pass" type="string">
+  Database password (if required)
+</ParamField>
+
+<ParamField path="clickhouse_secure" type="boolean" default="false">
+  Use SSL/TLS for connection
+</ParamField>
+
+<ParamField path="connection_pool_size" type="integer" default="10">
+  Maximum number of connections in the pool
+</ParamField>
+
+<ParamField path="client_timeout" type="duration" default="30s">
+  Query timeout (e.g., `60s`, `5m`)
+</ParamField>
+
+## Authentication
+
+### Password Authentication
+
+```yaml
+params:
+  clickhouse_user: myuser
+  clickhouse_pass: ${secrets:clickhouse_password}
+```
+
+### No Authentication
+
+For local development:
+
+```yaml
+params:
+  clickhouse_user: default
+  clickhouse_pass: ""
+```
+
+## Use Cases
+
+### Real-Time Analytics Dashboard
+
+```yaml
+datasets:
+  - from: clickhouse:events.page_views
+    name: page_views
+    params:
+      clickhouse_host: analytics.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: events
+      clickhouse_user: dashboard
+      clickhouse_pass: ${secrets:clickhouse_password}
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 10s
+```
+
+Real-time queries:
+
+```sql
+SELECT 
+  toStartOfInterval(timestamp, INTERVAL 5 MINUTE) as time_bucket,
+  page_path,
+  COUNT(*) as views,
+  COUNT(DISTINCT user_id) as unique_users
+FROM page_views
+WHERE timestamp >= NOW() - INTERVAL 1 HOUR
+GROUP BY time_bucket, page_path
+ORDER BY time_bucket DESC, views DESC;
+```
+
+### Log Analytics
+
+```yaml
+datasets:
+  - from: clickhouse:logs.application_logs
+    name: app_logs
+    params:
+      clickhouse_host: ${env:CLICKHOUSE_HOST}
+      clickhouse_tcp_port: 9000
+      clickhouse_db: logs
+      clickhouse_user: log_reader
+      clickhouse_pass: ${secrets:clickhouse_password}
+```
+
+Query logs:
+
+```sql
+SELECT 
+  level,
+  COUNT(*) as count,
+  COUNT(DISTINCT service_name) as affected_services
+FROM app_logs
+WHERE timestamp >= NOW() - INTERVAL 1 HOUR
+  AND level IN ('ERROR', 'CRITICAL')
+GROUP BY level
+ORDER BY count DESC;
+```
+
+### Federated Query with Operational Database
+
+```yaml
+datasets:
+  # ClickHouse for analytics
+  - from: clickhouse:analytics.user_behavior
+    name: user_behavior
+    params:
+      clickhouse_host: clickhouse.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: analytics
+      clickhouse_user: analyst
+      clickhouse_pass: ${secrets:clickhouse_password}
+
+  # PostgreSQL for user data
+  - from: postgres:public.users
+    name: users
+    params:
+      pg_host: postgres.internal
+      pg_db: app
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+```
+
+Join across systems:
+
+```sql
+SELECT 
+  u.email,
+  u.signup_date,
+  COUNT(b.event_id) as total_events,
+  MAX(b.timestamp) as last_activity
+FROM users u
+LEFT JOIN user_behavior b ON u.id = b.user_id
+WHERE b.timestamp >= NOW() - INTERVAL 7 DAY
+GROUP BY u.email, u.signup_date
+HAVING total_events > 100
+ORDER BY total_events DESC;
+```
+
+### Time-Series Metrics
+
+```yaml
+datasets:
+  - from: clickhouse:metrics.server_metrics
+    name: server_metrics
+    params:
+      clickhouse_host: metrics-db.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: metrics
+      clickhouse_user: monitoring
+      clickhouse_pass: ${secrets:clickhouse_password}
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: memory
+      refresh_interval: 15s
+```
+
+Monitoring queries:
+
+```sql
+SELECT 
+  server_name,
+  AVG(cpu_usage) as avg_cpu,
+  MAX(memory_usage) as max_memory,
+  AVG(disk_io) as avg_disk_io
+FROM server_metrics
+WHERE timestamp >= NOW() - INTERVAL 5 MINUTE
+GROUP BY server_name
+HAVING avg_cpu > 80  -- Alert condition
+ORDER BY avg_cpu DESC;
+```
+
+## Performance Tips
+
+1. **Query Push-down**: Spice pushes WHERE clauses and aggregations to ClickHouse for optimal performance
+2. **Acceleration**: Enable for frequently queried data to reduce ClickHouse load
+3. **Partition Keys**: Ensure ClickHouse tables use proper partition keys for time-series data
+4. **Connection Pooling**: Adjust pool size based on query concurrency
+5. **MergeTree Tables**: Use ClickHouse MergeTree engines for best analytical performance
+
+## ClickHouse-Specific Features
+
+### Materialized Views
+
+Query ClickHouse materialized views directly:
+
+```yaml
+datasets:
+  - from: clickhouse:analytics.hourly_stats_mv
+    name: hourly_stats
+    params:
+      clickhouse_host: clickhouse.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: analytics
+      clickhouse_user: reader
+      clickhouse_pass: ${secrets:clickhouse_password}
+```
+
+### Distributed Tables
+
+Connect to ClickHouse distributed tables:
+
+```yaml
+datasets:
+  - from: clickhouse:events.events_distributed
+    name: all_events
+    params:
+      clickhouse_host: clickhouse-proxy.internal
+      clickhouse_tcp_port: 9000
+      clickhouse_db: events
+      clickhouse_user: spice
+      clickhouse_pass: ${secrets:clickhouse_password}
+```
+
+## Data Type Mapping
+
+ClickHouse types are automatically mapped to Arrow types:
+
+- `Int8`, `Int16`, `Int32`, `Int64` → `Int8`, `Int16`, `Int32`, `Int64`
+- `UInt8`, `UInt16`, `UInt32`, `UInt64` → `UInt8`, `UInt16`, `UInt32`, `UInt64`
+- `Float32`, `Float64` → `Float32`, `Float64`
+- `String`, `FixedString` → `Utf8`
+- `Date`, `Date32` → `Date32`
+- `DateTime`, `DateTime64` → `Timestamp`
+- `Array(T)` → `List`
+- `Nullable(T)` → Nullable Arrow type
+
+## Limitations
+
+- Write operations not supported (read-only)
+- Some ClickHouse-specific functions may not work in federated queries
+- Very large result sets may require pagination
+- Alpha status - expect API changes
+
+## Related Resources
+
+- [ClickHouse Documentation](https://clickhouse.com/docs)
+- [ClickHouse Data Types](https://clickhouse.com/docs/en/sql-reference/data-types/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)

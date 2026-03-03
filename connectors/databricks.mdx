@@ -1,0 +1,318 @@
+---
+title: 'Databricks Data Connector'
+description: 'Connect Spice to Databricks using Delta Lake or Spark Connect'
+---
+
+The Databricks connector enables Spice to query Databricks tables using two modes: Delta Lake (via S3) and Spark Connect. This provides flexibility for different use cases and performance requirements.
+
+## Status
+
+- **Delta Lake Mode**: Stable
+- **Spark Connect Mode**: Beta
+
+## Supported Features
+
+### Delta Lake Mode (Stable)
+- Direct Delta Lake table access via S3
+- Predicate push-down
+- Partition pruning
+- Data acceleration
+- High performance reads
+
+### Spark Connect Mode (Beta)
+- Native Databricks connectivity
+- SQL Warehouse integration
+- Unity Catalog support
+- Push-down optimizations
+
+## Configuration
+
+### Delta Lake Mode
+
+```yaml
+version: v1
+kind: Spicepod
+name: databricks-delta
+
+datasets:
+  - from: databricks:catalog.schema.table
+    name: my_table
+    params:
+      mode: delta_lake
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_aws_access_key_id: ${env:AWS_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_SECRET_ACCESS_KEY}
+      client_timeout: 600s
+```
+
+### Delta Lake with Acceleration
+
+```yaml
+datasets:
+  - from: databricks:spiceai_sandbox.tpcds.customer
+    name: customer
+    params:
+      mode: delta_lake
+      client_timeout: 600s
+      databricks_aws_access_key_id: ${env:AWS_DATABRICKS_DELTA_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_DATABRICKS_DELTA_SECRET_ACCESS_KEY}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+    acceleration:
+      enabled: true
+      engine: arrow
+```
+
+### Spark Connect Mode
+
+```yaml
+datasets:
+  - from: databricks:catalog.schema.table
+    name: my_table
+    params:
+      mode: spark_connect
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_cluster_id: ${env:DATABRICKS_CLUSTER_ID}
+```
+
+### Multiple Tables with Shared Config
+
+```yaml
+datasets:
+  - from: databricks:spiceai_sandbox.tpcds.item
+    name: item
+    params: &databricks_delta_params
+      mode: delta_lake
+      client_timeout: 600s
+      databricks_aws_access_key_id: ${env:AWS_DATABRICKS_DELTA_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_DATABRICKS_DELTA_SECRET_ACCESS_KEY}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+    acceleration: &acceleration_params
+      enabled: true
+      engine: arrow
+
+  - from: databricks:spiceai_sandbox.tpcds.store_sales
+    name: store_sales
+    params: *databricks_delta_params
+    acceleration: *acceleration_params
+
+  - from: databricks:spiceai_sandbox.tpcds.customer
+    name: customer
+    params: *databricks_delta_params
+    acceleration: *acceleration_params
+```
+
+## Parameters
+
+### Common Parameters
+
+<ParamField path="mode" type="string" required>
+  Connection mode: `delta_lake` (stable) or `spark_connect` (beta)
+</ParamField>
+
+<ParamField path="databricks_endpoint" type="string" required>
+  Databricks workspace URL (e.g., `https://dbc-1234.cloud.databricks.com`)
+</ParamField>
+
+<ParamField path="databricks_token" type="string" required>
+  Databricks personal access token or service principal token
+</ParamField>
+
+<ParamField path="client_timeout" type="duration" default="30s">
+  Timeout for Databricks operations (e.g., `60s`, `10m`)
+</ParamField>
+
+### Delta Lake Mode Parameters
+
+<ParamField path="databricks_aws_access_key_id" type="string" required>
+  AWS access key ID for S3 access (Delta Lake storage)
+</ParamField>
+
+<ParamField path="databricks_aws_secret_access_key" type="string" required>
+  AWS secret access key for S3 access (Delta Lake storage)
+</ParamField>
+
+<ParamField path="databricks_aws_region" type="string" default="us-east-1">
+  AWS region where Delta Lake tables are stored
+</ParamField>
+
+### Spark Connect Mode Parameters
+
+<ParamField path="databricks_cluster_id" type="string">
+  Databricks cluster ID for Spark Connect (required for cluster mode)
+</ParamField>
+
+<ParamField path="databricks_use_ssl" type="boolean" default="true">
+  Use SSL/TLS for Spark Connect connection
+</ParamField>
+
+## Authentication
+
+### Personal Access Token
+
+Create a personal access token in Databricks:
+
+1. Go to User Settings → Developer → Access Tokens
+2. Generate new token
+3. Store in environment variable or secret store
+
+```yaml
+params:
+  databricks_token: ${secrets:DATABRICKS_TOKEN}
+```
+
+### Service Principal (Recommended for Production)
+
+```yaml
+params:
+  databricks_token: ${secrets:DATABRICKS_SP_TOKEN}
+  databricks_endpoint: ${env:DATABRICKS_HOST}
+```
+
+## Use Cases
+
+### Data Lakehouse Analytics
+
+```yaml
+datasets:
+  - from: databricks:main.analytics.daily_metrics
+    name: daily_metrics
+    params:
+      mode: delta_lake
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_aws_access_key_id: ${env:AWS_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_SECRET_ACCESS_KEY}
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 10m
+```
+
+Query with acceleration:
+
+```sql
+SELECT 
+  date,
+  SUM(revenue) as total_revenue,
+  COUNT(DISTINCT user_id) as active_users
+FROM daily_metrics
+WHERE date >= CURRENT_DATE - INTERVAL '7' DAY
+GROUP BY date
+ORDER BY date;
+```
+
+### Unity Catalog Integration
+
+```yaml
+datasets:
+  - from: databricks:prod_catalog.finance.transactions
+    name: transactions
+    params:
+      mode: delta_lake
+      databricks_endpoint: https://my-workspace.cloud.databricks.com
+      databricks_token: ${secrets:DATABRICKS_TOKEN}
+      databricks_aws_access_key_id: ${env:AWS_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_SECRET_ACCESS_KEY}
+```
+
+### Federated Query with Other Sources
+
+```yaml
+datasets:
+  - from: databricks:warehouse.sales.orders
+    name: databricks_orders
+    params:
+      mode: delta_lake
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_aws_access_key_id: ${env:AWS_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_SECRET_ACCESS_KEY}
+
+  - from: postgres:public.customers
+    name: postgres_customers
+    params:
+      pg_host: localhost
+      pg_db: crm
+      pg_user: app
+      pg_pass: ${secrets:pg_password}
+```
+
+Join across sources:
+
+```sql
+SELECT 
+  c.name,
+  c.email,
+  COUNT(o.id) as order_count,
+  SUM(o.amount) as total_spent
+FROM postgres_customers c
+LEFT JOIN databricks_orders o ON c.id = o.customer_id
+GROUP BY c.name, c.email
+ORDER BY total_spent DESC
+LIMIT 100;
+```
+
+### Time Travel Queries
+
+Delta Lake supports time travel:
+
+```yaml
+datasets:
+  - from: databricks:main.prod.inventory@v123
+    name: inventory_snapshot
+    params:
+      mode: delta_lake
+      databricks_endpoint: ${env:DATABRICKS_HOST}
+      databricks_token: ${env:DATABRICKS_TOKEN}
+      databricks_aws_access_key_id: ${env:AWS_ACCESS_KEY_ID}
+      databricks_aws_secret_access_key: ${env:AWS_SECRET_ACCESS_KEY}
+```
+
+## Performance Tips
+
+1. **Choose the Right Mode**:
+   - Use **Delta Lake mode** for best read performance
+   - Use **Spark Connect mode** for Unity Catalog features
+
+2. **Enable Acceleration**: For frequently queried tables, acceleration provides sub-second queries
+
+3. **Partition Pruning**: Spice automatically prunes partitions when filters match partition columns
+
+4. **Predicate Push-down**: WHERE clauses are pushed to Databricks for efficient filtering
+
+5. **Client Timeout**: Increase timeout for large tables: `client_timeout: 600s`
+
+## Mode Comparison
+
+| Feature | Delta Lake Mode | Spark Connect Mode |
+|---------|----------------|--------------------|
+| **Status** | Stable | Beta |
+| **Performance** | High (direct S3 access) | Medium (via Spark) |
+| **Setup Complexity** | Medium (requires AWS creds) | Low (token only) |
+| **Unity Catalog** | ✓ | ✓ |
+| **SQL Warehouse** | ✗ | ✓ |
+| **Time Travel** | ✓ | ✓ |
+| **Push-down** | Advanced | Standard |
+
+## Limitations
+
+### Delta Lake Mode
+- Requires AWS credentials for S3 access
+- Azure and GCP support roadmap
+- Write operations not supported
+
+### Spark Connect Mode
+- Beta status - expect changes
+- Requires active cluster or SQL warehouse
+- Higher query latency than Delta Lake mode
+
+## Related Resources
+
+- [Databricks Cookbook Examples](https://github.com/spiceai/cookbook/blob/trunk/databricks/README.md)
+- [Delta Lake Documentation](https://docs.delta.io/)
+- [Unity Catalog Documentation](https://docs.databricks.com/unity-catalog/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)

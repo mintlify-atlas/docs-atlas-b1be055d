@@ -1,0 +1,257 @@
+---
+title: 'S3 Data Connector'
+description: 'Query Parquet and CSV files stored in Amazon S3 and S3-compatible storage'
+---
+
+The S3 connector enables Spice to query data stored in Amazon S3 and S3-compatible storage systems (MinIO, Wasabi, etc.). It supports Parquet and CSV formats with automatic schema detection and query push-down.
+
+## Status
+
+**Stable** - Production-ready with comprehensive testing
+
+## Supported Features
+
+- Parquet and CSV file formats
+- Automatic schema inference
+- Predicate push-down for Parquet files
+- Partition pruning
+- S3 and S3-compatible endpoints
+- Multiple authentication methods
+- Data acceleration
+- Globbing patterns for multiple files
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: s3-demo
+
+datasets:
+  - from: s3://my-bucket/data/users.parquet
+    name: users
+    params:
+      file_format: parquet
+```
+
+### With Authentication
+
+```yaml
+datasets:
+  - from: s3://my-bucket/data/sales.parquet
+    name: sales
+    params:
+      file_format: parquet
+      s3_auth: key
+      s3_key: ${secrets:AWS_ACCESS_KEY_ID}
+      s3_secret: ${secrets:AWS_SECRET_ACCESS_KEY}
+      s3_region: us-east-1
+```
+
+### S3-Compatible Endpoint
+
+```yaml
+datasets:
+  - from: s3://benchmarks/clickbench/hits.parquet
+    name: hits
+    params:
+      file_format: parquet
+      allow_http: true
+      s3_auth: key
+      s3_endpoint: ${secrets:S3_ENDPOINT}
+      s3_key: ${secrets:S3_KEY}
+      s3_secret: ${secrets:S3_SECRET}
+```
+
+### With Acceleration
+
+```yaml
+datasets:
+  - from: s3://my-bucket/analytics/*.parquet
+    name: analytics
+    params:
+      file_format: parquet
+      s3_region: us-west-2
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 10m
+```
+
+## Parameters
+
+<ParamField path="file_format" type="string" required>
+  File format: `parquet` or `csv`
+</ParamField>
+
+<ParamField path="s3_auth" type="string" default="default">
+  Authentication method:
+  - `default`: Use AWS default credential chain
+  - `key`: Use access key and secret
+  - `role`: Use IAM role
+</ParamField>
+
+<ParamField path="s3_key" type="string">
+  AWS access key ID (when `s3_auth: key`)
+</ParamField>
+
+<ParamField path="s3_secret" type="string">
+  AWS secret access key (when `s3_auth: key`)
+</ParamField>
+
+<ParamField path="s3_region" type="string" default="us-east-1">
+  AWS region for the S3 bucket
+</ParamField>
+
+<ParamField path="s3_endpoint" type="string">
+  Custom S3-compatible endpoint URL
+</ParamField>
+
+<ParamField path="allow_http" type="boolean" default="false">
+  Allow HTTP connections (use with custom endpoints)
+</ParamField>
+
+<ParamField path="client_timeout" type="duration" default="30s">
+  Timeout for S3 operations (e.g., `60s`, `5m`)
+</ParamField>
+
+### CSV-Specific Parameters
+
+<ParamField path="csv_has_header" type="boolean" default="true">
+  Whether CSV file has a header row
+</ParamField>
+
+<ParamField path="csv_delimiter" type="string" default=",">
+  CSV field delimiter
+</ParamField>
+
+<ParamField path="csv_quote" type="string" default='"'>
+  CSV quote character
+</ParamField>
+
+## Authentication
+
+### Default Credentials Chain
+
+Uses AWS default credential chain (environment variables, IAM role, etc.):
+
+```yaml
+params:
+  s3_auth: default
+  s3_region: us-east-1
+```
+
+### Access Keys
+
+Explicitly provide access key and secret:
+
+```yaml
+params:
+  s3_auth: key
+  s3_key: ${secrets:AWS_ACCESS_KEY_ID}
+  s3_secret: ${secrets:AWS_SECRET_ACCESS_KEY}
+  s3_region: us-east-1
+```
+
+### IAM Role
+
+Use IAM role (recommended for EC2/EKS):
+
+```yaml
+params:
+  s3_auth: role
+  s3_region: us-east-1
+```
+
+## Use Cases
+
+### Query Parquet Data Lake
+
+```yaml
+datasets:
+  - from: s3://data-lake/events/year=2024/month=01/*.parquet
+    name: january_events
+    params:
+      file_format: parquet
+      s3_region: us-west-2
+```
+
+Query the data:
+
+```sql
+SELECT event_type, COUNT(*) as count
+FROM january_events
+WHERE timestamp > '2024-01-15'
+GROUP BY event_type;
+```
+
+### CSV Analytics with Acceleration
+
+```yaml
+datasets:
+  - from: s3://analytics-bucket/daily-reports/report.csv
+    name: daily_report
+    params:
+      file_format: csv
+      csv_has_header: true
+      s3_region: eu-west-1
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_interval: 1h
+```
+
+### Multi-Region Partitioned Data
+
+```yaml
+datasets:
+  - from: s3://global-logs/region=us-east-1/*.parquet
+    name: us_logs
+    params:
+      file_format: parquet
+      s3_region: us-east-1
+
+  - from: s3://global-logs/region=eu-west-1/*.parquet
+    name: eu_logs
+    params:
+      file_format: parquet
+      s3_region: eu-west-1
+```
+
+### MinIO/S3-Compatible Storage
+
+```yaml
+datasets:
+  - from: s3://lakehouse/warehouse/inventory.parquet
+    name: inventory
+    params:
+      file_format: parquet
+      s3_endpoint: http://minio.local:9000
+      allow_http: true
+      s3_auth: key
+      s3_key: minioadmin
+      s3_secret: ${secrets:MINIO_PASSWORD}
+```
+
+## Performance Tips
+
+1. **Use Parquet**: Parquet format provides columnar storage with compression and predicate push-down
+2. **Enable Acceleration**: For frequently queried data, enable acceleration for sub-second queries
+3. **Partition Data**: Organize data by date/region for partition pruning
+4. **Use Globbing**: Query multiple files efficiently with patterns like `*.parquet`
+5. **Regional Proximity**: Use S3 buckets in the same region as your Spice runtime
+
+## Limitations
+
+- Write operations are not supported (read-only connector)
+- Schema changes in source files require dataset refresh
+- Very large files (>10GB) may benefit from partitioning
+
+## Related Resources
+
+- [S3 Cookbook Examples](https://github.com/spiceai/cookbook/tree/trunk/s3)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Parquet Format Documentation](https://parquet.apache.org/)

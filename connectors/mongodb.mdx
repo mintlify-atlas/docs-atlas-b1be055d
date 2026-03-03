@@ -1,0 +1,376 @@
+---
+title: 'MongoDB Data Connector'
+description: 'Connect Spice to MongoDB collections for federated SQL queries'
+---
+
+The MongoDB connector enables Spice to query MongoDB collections using SQL, with automatic schema inference and data acceleration support.
+
+## Status
+
+**Alpha** - Early access with ongoing development
+
+## Supported Features
+
+- SQL queries on MongoDB collections
+- Automatic schema inference
+- Connection pooling
+- SSL/TLS support
+- Authentication with multiple mechanisms
+- Data acceleration
+- Query push-down for filters
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: mongodb-demo
+
+datasets:
+  - from: mongodb:my_collection
+    name: my_collection
+    params:
+      mongodb_host: localhost
+      mongodb_port: 27017
+      mongodb_db: mydb
+      mongodb_user: admin
+      mongodb_pass: ${secrets:mongodb_password}
+      mongodb_auth_source: admin
+```
+
+### With SSL/TLS
+
+```yaml
+datasets:
+  - from: mongodb:users
+    name: users
+    params:
+      mongodb_host: mongodb.example.com
+      mongodb_port: 27017
+      mongodb_db: production
+      mongodb_user: app_user
+      mongodb_pass: ${secrets:mongodb_password}
+      mongodb_auth_source: admin
+      mongodb_sslmode: required
+```
+
+### With Data Acceleration
+
+```yaml
+datasets:
+  - from: mongodb:orders
+    name: orders
+    params:
+      mongodb_host: ${env:MONGODB_HOST}
+      mongodb_port: 27017
+      mongodb_db: ecommerce
+      mongodb_user: readonly
+      mongodb_pass: ${env:MONGODB_PASSWORD}
+      mongodb_auth_source: admin
+      mongodb_sslmode: disabled
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 1m
+```
+
+### Multiple Collections
+
+```yaml
+datasets:
+  - from: mongodb:customer
+    name: customer
+    params: &mongodb_params
+      mongodb_host: ${env:MONGODB_HOST}
+      mongodb_port: 27017
+      mongodb_auth_source: admin
+      mongodb_db: tpch_sf1
+      mongodb_user: root
+      mongodb_pass: ${env:MONGODB_PASSWORD}
+      mongodb_sslmode: disabled
+
+  - from: mongodb:orders
+    name: orders
+    params: *mongodb_params
+
+  - from: mongodb:lineitem
+    name: lineitem
+    params: *mongodb_params
+```
+
+## Parameters
+
+<ParamField path="mongodb_host" type="string" required>
+  MongoDB server hostname or IP address
+</ParamField>
+
+<ParamField path="mongodb_port" type="integer" default="27017">
+  MongoDB server port
+</ParamField>
+
+<ParamField path="mongodb_db" type="string" required>
+  Database name
+</ParamField>
+
+<ParamField path="mongodb_user" type="string">
+  Database user (if authentication is enabled)
+</ParamField>
+
+<ParamField path="mongodb_pass" type="string">
+  Database password (if authentication is enabled)
+</ParamField>
+
+<ParamField path="mongodb_auth_source" type="string" default="admin">
+  Authentication database (typically `admin`)
+</ParamField>
+
+<ParamField path="mongodb_sslmode" type="string" default="disabled">
+  SSL/TLS mode:
+  - `disabled`: No SSL
+  - `preferred`: Try SSL, fallback to non-SSL
+  - `required`: Require SSL
+</ParamField>
+
+<ParamField path="connection_pool_size" type="integer" default="10">
+  Maximum number of connections in the pool
+</ParamField>
+
+## Authentication
+
+### SCRAM-SHA-256 (Default)
+
+```yaml
+params:
+  mongodb_user: myuser
+  mongodb_pass: ${secrets:mongodb_password}
+  mongodb_auth_source: admin
+```
+
+### No Authentication
+
+For local development:
+
+```yaml
+params:
+  mongodb_host: localhost
+  mongodb_port: 27017
+  mongodb_db: mydb
+  # No user/pass for local MongoDB without auth
+```
+
+## Use Cases
+
+### Query MongoDB with SQL
+
+```yaml
+datasets:
+  - from: mongodb:products
+    name: products
+    params:
+      mongodb_host: mongo.internal
+      mongodb_port: 27017
+      mongodb_db: catalog
+      mongodb_user: app
+      mongodb_pass: ${secrets:mongodb_password}
+      mongodb_auth_source: admin
+```
+
+SQL queries on MongoDB:
+
+```sql
+SELECT 
+  category,
+  COUNT(*) as product_count,
+  AVG(price) as avg_price,
+  MIN(price) as min_price,
+  MAX(price) as max_price
+FROM products
+WHERE in_stock = true
+GROUP BY category
+ORDER BY product_count DESC;
+```
+
+### Federated Query with SQL Databases
+
+```yaml
+datasets:
+  # MongoDB for product catalog
+  - from: mongodb:products
+    name: products
+    params:
+      mongodb_host: mongo.internal
+      mongodb_db: catalog
+      mongodb_user: readonly
+      mongodb_pass: ${secrets:mongodb_password}
+      mongodb_auth_source: admin
+
+  # PostgreSQL for orders
+  - from: postgres:public.orders
+    name: orders
+    params:
+      pg_host: postgres.internal
+      pg_db: ecommerce
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+```
+
+Join MongoDB and PostgreSQL:
+
+```sql
+SELECT 
+  p.name as product_name,
+  p.category,
+  COUNT(o.id) as order_count,
+  SUM(o.quantity) as total_quantity
+FROM orders o
+JOIN products p ON o.product_id = p._id
+WHERE o.order_date >= CURRENT_DATE - INTERVAL '30' DAY
+GROUP BY p.name, p.category
+ORDER BY order_count DESC
+LIMIT 20;
+```
+
+### Real-Time Analytics on MongoDB
+
+```yaml
+datasets:
+  - from: mongodb:events
+    name: events
+    params:
+      mongodb_host: ${env:MONGODB_HOST}
+      mongodb_port: 27017
+      mongodb_db: analytics
+      mongodb_user: analytics_user
+      mongodb_pass: ${env:MONGODB_PASSWORD}
+      mongodb_auth_source: admin
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: memory
+      refresh_interval: 30s
+```
+
+Fast analytical queries:
+
+```sql
+SELECT 
+  event_type,
+  DATE_TRUNC('hour', timestamp) as hour,
+  COUNT(*) as event_count,
+  COUNT(DISTINCT user_id) as unique_users
+FROM events
+WHERE timestamp >= NOW() - INTERVAL '24' HOUR
+GROUP BY event_type, hour
+ORDER BY hour DESC, event_count DESC;
+```
+
+### MongoDB Aggregation via SQL
+
+```yaml
+datasets:
+  - from: mongodb:user_sessions
+    name: sessions
+    params:
+      mongodb_host: mongo-analytics.internal
+      mongodb_db: user_data
+      mongodb_user: analyst
+      mongodb_pass: ${secrets:mongodb_password}
+      mongodb_auth_source: admin
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 5m
+```
+
+Complex aggregations:
+
+```sql
+SELECT 
+  user_agent,
+  AVG(session_duration) as avg_duration,
+  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY session_duration) as median_duration,
+  PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY session_duration) as p95_duration,
+  COUNT(*) as session_count
+FROM sessions
+WHERE created_at >= CURRENT_DATE - INTERVAL '7' DAY
+GROUP BY user_agent
+HAVING session_count > 100
+ORDER BY avg_duration DESC;
+```
+
+## Performance Tips
+
+1. **Schema Inference**: First query infers schema from collection; subsequent queries use cached schema
+2. **Acceleration**: Essential for large collections to achieve fast SQL queries
+3. **Indexes**: Ensure MongoDB collections have proper indexes for common filter fields
+4. **Push-down**: Basic filter push-down is supported; complex operations run in Spice
+5. **Projection**: Specify only needed columns to reduce data transfer
+
+## Schema Handling
+
+### Automatic Schema Inference
+
+Spice automatically infers schema from MongoDB documents:
+
+```javascript
+// MongoDB document
+{
+  _id: ObjectId("..."),
+  name: "Product A",
+  price: 29.99,
+  in_stock: true,
+  tags: ["electronics", "new"],
+  metadata: { color: "black", weight: 1.5 }
+}
+```
+
+Inferred SQL schema:
+- `_id` → `Utf8` (string)
+- `name` → `Utf8`
+- `price` → `Float64`
+- `in_stock` → `Boolean`
+- `tags` → `List<Utf8>`
+- `metadata` → `Struct` or `Utf8` (JSON string)
+
+### Nested Documents
+
+Nested documents are flattened or represented as JSON strings:
+
+```sql
+-- Access nested fields
+SELECT 
+  name,
+  price,
+  metadata->>'color' as color  -- JSON extraction
+FROM products;
+```
+
+## Data Type Mapping
+
+MongoDB BSON types are mapped to Arrow types:
+
+- `String` → `Utf8`
+- `Int32`, `Int64` → `Int32`, `Int64`
+- `Double` → `Float64`
+- `Boolean` → `Boolean`
+- `Date` → `Timestamp`
+- `ObjectId` → `Utf8` (string representation)
+- `Array` → `List`
+- `Object` → `Struct` or `Utf8` (JSON)
+
+## Limitations
+
+- Write operations not supported (read-only)
+- Complex nested documents may require manual schema specification
+- MongoDB aggregation pipeline features not directly supported (use SQL instead)
+- Alpha status - expect API changes
+- Large collections benefit significantly from acceleration
+
+## Related Resources
+
+- [MongoDB Documentation](https://www.mongodb.com/docs/)
+- [MongoDB BSON Types](https://www.mongodb.com/docs/manual/reference/bson-types/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)

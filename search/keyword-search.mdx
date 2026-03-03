@@ -1,0 +1,305 @@
+---
+title: 'Keyword Search'
+description: 'Traditional SQL pattern matching for keyword and exact-match search'
+---
+
+Keyword search uses standard SQL operators for exact and pattern-based text matching.
+
+## SQL-Based Search
+
+Use SQL's built-in text operations for keyword search:
+
+### Exact Match
+
+```sql
+-- Exact match
+SELECT * FROM articles
+WHERE title = 'Introduction to Machine Learning';
+
+-- Case-insensitive exact match
+SELECT * FROM products
+WHERE LOWER(name) = LOWER('Laptop');
+```
+
+### LIKE Pattern Matching
+
+```sql
+-- Contains keyword
+SELECT * FROM articles
+WHERE title LIKE '%machine learning%';
+
+-- Starts with
+SELECT * FROM products
+WHERE sku LIKE 'PROD-%';
+
+-- Ends with
+SELECT * FROM files
+WHERE filename LIKE '%.pdf';
+
+-- Multiple patterns
+SELECT * FROM articles
+WHERE content LIKE '%python%'
+   OR content LIKE '%rust%';
+```
+
+### Case-Insensitive Search
+
+```sql
+-- ILIKE (case-insensitive LIKE)
+SELECT * FROM customers
+WHERE email ILIKE '%@gmail.com';
+
+-- Using LOWER
+SELECT * FROM products
+WHERE LOWER(description) LIKE LOWER('%wireless%');
+```
+
+## Regular Expressions
+
+Use regex for complex pattern matching:
+
+```sql
+-- Regex match
+SELECT * FROM logs
+WHERE message ~ 'ERROR.*connection';
+
+-- Case-insensitive regex
+SELECT * FROM articles
+WHERE title ~* '(rust|go|python) programming';
+
+-- Extract with regex
+SELECT 
+  id,
+  REGEXP_EXTRACT(email, '([^@]+)@', 1) as username
+FROM users;
+```
+
+## Full-Text Functions
+
+### String Contains
+
+```sql
+-- Using POSITION
+SELECT * FROM articles
+WHERE POSITION('docker' IN LOWER(content)) > 0;
+
+-- Using CONTAINS (if supported)
+SELECT * FROM documents
+WHERE CONTAINS(content, 'kubernetes');
+```
+
+### Multiple Keywords
+
+```sql
+-- All keywords must match (AND)
+SELECT * FROM articles
+WHERE title LIKE '%python%'
+  AND title LIKE '%tutorial%';
+
+-- Any keyword matches (OR)
+SELECT * FROM products
+WHERE name LIKE '%laptop%'
+   OR name LIKE '%notebook%'
+   OR name LIKE '%computer%';
+
+-- Using IN for multiple exact matches
+SELECT * FROM categories
+WHERE name IN ('Electronics', 'Computers', 'Hardware');
+```
+
+## Performance Considerations
+
+### Indexing
+
+Create indexes on frequently searched columns:
+
+```yaml
+datasets:
+  - name: products
+    acceleration:
+      enabled: true
+      indexes:
+        - columns: [sku]
+          type: unique
+        - columns: [category, name]
+```
+
+### Leading Wildcards
+
+Avoid leading wildcards for better performance:
+
+```sql
+-- Slow: cannot use index
+SELECT * FROM products WHERE name LIKE '%phone';
+
+-- Fast: can use index
+SELECT * FROM products WHERE name LIKE 'phone%';
+
+-- Better: use full-text search for contains queries
+SELECT * FROM text_search(products, 'phone');
+```
+
+### Acceleration
+
+Enable acceleration for faster queries:
+
+```yaml
+datasets:
+  - name: articles
+    from: postgres:articles
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+```
+
+## Combining with Full-Text Search
+
+Use keyword search for structured fields, full-text search for content:
+
+```sql
+SELECT 
+  a.id,
+  a.title,
+  a.author,
+  t._score
+FROM text_search(articles, 'machine learning algorithms') t
+JOIN articles a ON t.id = a.id
+WHERE a.category = 'AI'  -- Keyword filter
+  AND a.publish_date > '2024-01-01'
+ORDER BY t._score DESC;
+```
+
+## Examples
+
+### Product Catalog Search
+
+```sql
+-- Search by SKU prefix and category
+SELECT 
+  sku,
+  name,
+  price,
+  category
+FROM products
+WHERE sku LIKE 'ELEC-%'
+  AND category = 'Electronics'
+  AND price < 1000
+ORDER BY price DESC;
+```
+
+### User Search
+
+```sql
+-- Find users by email domain
+SELECT 
+  user_id,
+  username,
+  email,
+  created_at
+FROM users
+WHERE email ILIKE '%@company.com'
+  AND status = 'active'
+ORDER BY created_at DESC;
+```
+
+### Log Filtering
+
+```sql
+-- Find error logs with specific patterns
+SELECT 
+  timestamp,
+  level,
+  service,
+  message
+FROM logs
+WHERE level = 'ERROR'
+  AND (message LIKE '%timeout%' 
+    OR message LIKE '%connection refused%')
+  AND timestamp > NOW() - INTERVAL '1 hour'
+ORDER BY timestamp DESC;
+```
+
+### Document Classification
+
+```sql
+-- Classify documents by content keywords
+SELECT 
+  doc_id,
+  title,
+  CASE
+    WHEN content LIKE '%python%' OR content LIKE '%rust%' THEN 'Programming'
+    WHEN content LIKE '%docker%' OR content LIKE '%kubernetes%' THEN 'DevOps'
+    WHEN content LIKE '%sql%' OR content LIKE '%database%' THEN 'Data'
+    ELSE 'General'
+  END as category
+FROM documents;
+```
+
+## When to Use Each Search Method
+
+| Use Case | Method | Example |
+|----------|--------|----------|
+| Exact ID/SKU lookup | Equality (`=`) | `WHERE id = 12345` |
+| Prefix matching | LIKE with trailing `%` | `WHERE sku LIKE 'PROD-%'` |
+| Contains keyword | LIKE with `%both%` | `WHERE title LIKE '%docker%'` |
+| Multiple exact values | IN | `WHERE status IN ('active', 'pending')` |
+| Complex patterns | Regular expressions | `WHERE email ~ '^[a-z]+@'` |
+| Semantic search | Vector search | `vector_search(table, query)` |
+| Keyword relevance | Full-text search | `text_search(table, query)` |
+| Best of both | Hybrid search | RRF combination |
+
+## Optimization Tips
+
+1. **Use indexes**: Create indexes on frequently searched columns
+2. **Avoid leading wildcards**: `'%term'` cannot use indexes
+3. **Accelerate datasets**: Enable acceleration for faster queries
+4. **Limit results**: Use LIMIT to reduce data transfer
+5. **Upgrade to full-text**: Use `text_search()` for complex text queries
+6. **Use vector search**: For semantic/meaning-based queries
+
+## Limitations
+
+- **No relevance ranking**: Results are not scored by relevance
+- **Case sensitivity**: LIKE is case-sensitive (use ILIKE or LOWER)
+- **No semantic understanding**: Only matches exact patterns
+- **Poor performance on wildcards**: Leading wildcards can't use indexes
+- **Limited text analysis**: No stemming, tokenization, or fuzzy matching
+
+## Migration to Advanced Search
+
+### From LIKE to Full-Text Search
+
+```sql
+-- Before: LIKE queries
+SELECT * FROM articles
+WHERE content LIKE '%machine learning%'
+   OR content LIKE '%artificial intelligence%';
+
+-- After: Full-text search with relevance
+SELECT *, _score
+FROM text_search(articles, 'machine learning artificial intelligence')
+ORDER BY _score DESC;
+```
+
+### From Keywords to Semantic Search
+
+```sql
+-- Before: Multiple keyword variations
+SELECT * FROM faqs
+WHERE question LIKE '%password%'
+  AND (question LIKE '%reset%' 
+    OR question LIKE '%forgot%'
+    OR question LIKE '%recover%');
+
+-- After: Semantic vector search
+SELECT *, _score
+FROM vector_search(faqs, 'how to reset forgotten password')
+ORDER BY _score DESC;
+```
+
+## See Also
+
+- [Full-Text Search](/search/full-text-search) - BM25 ranking with relevance scores
+- [Vector Search](/search/vector-search) - Semantic search with embeddings
+- [Hybrid Search](/search/hybrid-search) - Combine multiple search methods

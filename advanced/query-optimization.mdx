@@ -1,0 +1,382 @@
+---
+title: 'Query Optimization'
+description: 'Best practices and techniques for optimizing query performance in Spice.ai'
+---
+
+## Overview
+
+Spice.ai is built on Apache DataFusion and provides multiple optimization techniques to improve query performance. Understanding these optimization strategies helps you write efficient queries and configure datasets for optimal performance.
+
+## Query Execution Architecture
+
+Spice uses a sophisticated query execution pipeline:
+
+1. **SQL Parsing** - Converts SQL text to logical plan
+2. **Logical Optimization** - Applies rule-based optimizations
+3. **Physical Planning** - Converts logical plan to executable plan
+4. **Physical Optimization** - Applies cost-based optimizations
+5. **Execution** - Runs the optimized plan
+
+## Filter Pushdown
+
+Filter pushdown is one of the most important query optimizations, reducing data transferred and processed by applying filters as early as possible.
+
+### How Filter Pushdown Works
+
+```sql
+-- Without filter pushdown:
+-- 1. Scan all rows from source
+-- 2. Load into accelerator
+-- 3. Apply WHERE clause
+
+-- With filter pushdown:
+-- 1. Push WHERE clause to source database
+-- 2. Source returns only matching rows
+-- 3. Load filtered data into accelerator
+
+SELECT * FROM sales WHERE region = 'US' AND date >= '2024-01-01';
+```
+
+### Filter Pushdown Support by Engine
+
+| Engine | Filter Pushdown | Notes |
+|--------|-----------------|-------|
+| DuckDB | Full | Supports all filter types |
+| PostgreSQL | Full | Pushes filters to remote DB |
+| Arrow | Limited | Filters applied in-memory |
+| Cayenne (Vortex) | Limited | Filters applied in-memory |
+| SQLite | Full | Supports all filter types |
+
+### Optimizing for Filter Pushdown
+
+**Use Simple Predicates**
+
+```sql
+-- GOOD - Simple predicates push down well
+SELECT * FROM orders WHERE status = 'shipped' AND amount > 100;
+
+-- LESS OPTIMAL - Complex expressions may not push down
+SELECT * FROM orders WHERE UPPER(status) = 'SHIPPED' OR amount * 1.1 > 100;
+```
+
+**Avoid Functions on Indexed Columns**
+
+```sql
+-- GOOD - Filter pushes down to index
+SELECT * FROM events WHERE created_at >= '2024-01-01';
+
+-- BAD - Function prevents index usage
+SELECT * FROM events WHERE DATE(created_at) = '2024-01-01';
+```
+
+**Use Parameterized Queries**
+
+Parameterized queries allow DataFusion to optimize filter pushdown without breaking optimization:
+
+```sql
+-- String parameters maintain filter pushdown
+SELECT * FROM customers WHERE region = $1 AND tier = $2;
+```
+
+<Note>
+Avoid wrapping string parameters in `CAST()` as this breaks filter pushdown optimization.
+</Note>
+
+## Predicate Pushdown
+
+Predicate pushdown applies filters directly to table scans before data is read:
+
+### Time-Based Predicates
+
+Time-based predicates are especially important for large time-series datasets:
+
+```yaml
+datasets:
+  - name: events
+    from: postgres:events
+    acceleration:
+      enabled: true
+      engine: duckdb
+      refresh_mode: append
+      refresh_check_interval: 10s
+      time_column: created_at
+      time_format: timestamptz
+```
+
+```sql
+-- Automatically pushed down using time_column
+SELECT * FROM events WHERE created_at > NOW() - INTERVAL '1 hour';
+```
+
+### Partition Pruning
+
+Partition pruning skips entire partitions based on filter predicates:
+
+```sql
+-- If data is partitioned by date, only relevant partitions are scanned
+SELECT * FROM logs 
+WHERE log_date BETWEEN '2024-01-01' AND '2024-01-31' 
+  AND severity = 'ERROR';
+```
+
+## Projection Pushdown
+
+Projection pushdown limits columns read from storage to only those needed:
+
+```sql
+-- GOOD - Only reads 2 columns
+SELECT customer_id, total_amount FROM orders WHERE status = 'completed';
+
+-- LESS OPTIMAL - Reads all columns then projects
+SELECT * FROM orders WHERE status = 'completed';
+```
+
+### Columnar Storage Benefits
+
+With columnar formats (Parquet, Arrow, Cayenne), projection pushdown provides dramatic performance improvements:
+
+```yaml
+datasets:
+  - name: wide_table
+    from: s3://bucket/data.parquet  # 100 columns
+    acceleration:
+      enabled: true
+      engine: arrow
+```
+
+```sql
+-- Only 3 of 100 columns read from storage
+SELECT id, name, email FROM wide_table WHERE status = 'active';
+```
+
+## Limit Pushdown
+
+Limit pushdown stops reading data once the limit is reached:
+
+```sql
+-- Stops after reading first 10 matching rows
+SELECT * FROM large_table WHERE category = 'electronics' LIMIT 10;
+```
+
+### Top-N Optimization
+
+DataFusion optimizes queries with `ORDER BY` + `LIMIT`:
+
+```sql
+-- Uses heap-based Top-N algorithm instead of full sort
+SELECT * FROM products ORDER BY price DESC LIMIT 10;
+```
+
+## Join Optimization
+
+### Join Order
+
+DataFusion automatically reorders joins based on statistics:
+
+```sql
+-- Optimizer determines optimal join order
+SELECT o.id, c.name, p.title
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+JOIN products p ON o.product_id = p.id
+WHERE c.country = 'US';
+```
+
+### Join Types
+
+Choose appropriate join types:
+
+- **Hash Join** - Best for large tables with equality predicates
+- **Merge Join** - Best for pre-sorted data
+- **Nested Loop Join** - Best for small tables or non-equality joins
+
+## Aggregation Optimization
+
+### Partial Aggregation
+
+DataFusion performs partial aggregations in parallel:
+
+```sql
+-- Aggregates in parallel partitions, then combines
+SELECT region, COUNT(*), SUM(amount)
+FROM sales
+GROUP BY region;
+```
+
+### Aggregation Pushdown
+
+Some engines support pushing aggregations to the source:
+
+```yaml
+datasets:
+  - name: metrics
+    from: postgres:metrics_table
+    acceleration:
+      enabled: true
+      engine: duckdb
+      # DuckDB can push aggregations to PostgreSQL
+```
+
+## Query Parallelism
+
+Configure parallelism for optimal CPU utilization:
+
+```yaml
+runtime:
+  query:
+    # Default: number of CPU cores
+    target_partitions: 8
+```
+
+### Partition Count Impact
+
+```sql
+-- More partitions = more parallelism
+-- But too many partitions = overhead
+-- Target: 1-4 partitions per CPU core
+
+SELECT COUNT(*) FROM large_table;  -- Uses target_partitions
+```
+
+## Index Usage
+
+Spice supports indexes for accelerated queries:
+
+```yaml
+datasets:
+  - name: products
+    from: postgres:products
+    acceleration:
+      enabled: true
+      engine: duckdb
+      indexes:
+        - columns: [category, price]
+        - columns: [sku]
+```
+
+```sql
+-- Uses index on (category, price)
+SELECT * FROM products 
+WHERE category = 'electronics' 
+  AND price BETWEEN 100 AND 500;
+```
+
+## Statistics and Cost-Based Optimization
+
+DataFusion uses statistics for cost-based optimization:
+
+```sql
+-- Collect statistics for better optimization
+ANALYZE TABLE sales;
+```
+
+### Available Statistics
+
+- Row counts
+- Distinct value counts
+- Min/max values
+- Null counts
+
+## Best Practices
+
+### 1. Use Appropriate Data Types
+
+```sql
+-- GOOD - Efficient data types
+CREATE TABLE events (
+  id BIGINT,
+  timestamp TIMESTAMP,
+  user_id INT,
+  action VARCHAR(50)
+);
+
+-- LESS OPTIMAL - Oversized types
+CREATE TABLE events (
+  id VARCHAR(255),  -- Wastes space
+  timestamp VARCHAR(255),  -- Prevents time optimizations
+  user_id VARCHAR(255),  -- Wastes space and prevents join optimization
+  action TEXT  -- Larger than needed
+);
+```
+
+### 2. Filter Early, Aggregate Late
+
+```sql
+-- GOOD
+SELECT region, AVG(amount)
+FROM sales
+WHERE date >= '2024-01-01'  -- Filter first
+GROUP BY region;
+
+-- LESS OPTIMAL
+SELECT region, AVG(amount)
+FROM sales
+GROUP BY region
+HAVING MIN(date) >= '2024-01-01';  -- Filter after aggregation
+```
+
+### 3. Use EXISTS Instead of IN for Subqueries
+
+```sql
+-- GOOD - More efficient
+SELECT * FROM orders o
+WHERE EXISTS (
+  SELECT 1 FROM customers c 
+  WHERE c.id = o.customer_id AND c.country = 'US'
+);
+
+-- LESS OPTIMAL - May execute subquery multiple times
+SELECT * FROM orders
+WHERE customer_id IN (
+  SELECT id FROM customers WHERE country = 'US'
+);
+```
+
+### 4. Avoid SELECT DISTINCT When Possible
+
+```sql
+-- GOOD - GROUP BY is more efficient
+SELECT customer_id
+FROM orders
+GROUP BY customer_id;
+
+-- LESS OPTIMAL - DISTINCT requires full sort/hash
+SELECT DISTINCT customer_id
+FROM orders;
+```
+
+## Query Analysis
+
+Use `EXPLAIN` to understand query execution:
+
+```sql
+-- View logical plan
+EXPLAIN SELECT * FROM sales WHERE region = 'US';
+
+-- View physical plan with metrics
+EXPLAIN ANALYZE SELECT * FROM sales WHERE region = 'US';
+```
+
+### Reading EXPLAIN Output
+
+Key sections to examine:
+
+- **Filter pushdown** - Are filters applied early?
+- **Projection pushdown** - Are only needed columns selected?
+- **Join order** - Is join order optimal?
+- **Parallelism** - Are partitions balanced?
+
+## Performance Monitoring
+
+```sql
+-- Query runtime metrics
+SELECT * FROM runtime.query_history
+ORDER BY duration_ms DESC
+LIMIT 10;
+```
+
+## Related Topics
+
+- [Caching](/advanced/caching) - Query result caching
+- [Partitioning](/advanced/partitioning) - Data partitioning strategies
+- [Snapshots](/advanced/snapshots) - Snapshot configuration

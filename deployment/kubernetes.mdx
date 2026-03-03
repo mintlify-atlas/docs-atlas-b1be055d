@@ -1,0 +1,482 @@
+---
+title: 'Kubernetes Deployment'
+description: 'Deploy Spice.ai on Kubernetes using Helm charts'
+---
+
+## Overview
+
+Spice.ai provides official Helm charts for deploying the runtime to Kubernetes clusters. The charts support both stateless and stateful deployments with persistent storage.
+
+## Prerequisites
+
+- Kubernetes cluster (1.19+)
+- Helm 3.0+
+- kubectl configured to access your cluster
+
+## Quick Start
+
+### Add Helm Repository
+
+```bash
+helm repo add spiceai https://helm.spiceai.org
+helm repo update
+```
+
+### Install Spice
+
+```bash
+helm install spiceai spiceai/spiceai
+```
+
+This deploys Spice with default configuration. To customize:
+
+```bash
+helm install spiceai spiceai/spiceai -f values.yaml
+```
+
+## Configuration
+
+### Basic values.yaml
+
+```yaml
+image:
+  repository: ghcr.io/spiceai/spiceai-nightly
+  tag: latest-models
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+spicepod:
+  name: app
+  version: v1
+  kind: Spicepod
+  datasets:
+    - from: s3://spiceai-demo-datasets/taxi_trips/2024/
+      name: taxi_trips
+      description: Demo taxi trips dataset
+      params:
+        file_format: parquet
+      acceleration:
+        enabled: true
+        engine: arrow
+```
+
+### Stateful Deployment with Persistent Storage
+
+For file-based accelerators (DuckDB, SQLite, Cayenne):
+
+```yaml
+stateful:
+  enabled: true
+  storageClass: 'standard'
+  size: 10Gi
+  mountPath: /data
+
+spicepod:
+  datasets:
+    - from: s3://my-bucket/data/
+      name: my_dataset
+      acceleration:
+        enabled: true
+        engine: duckdb
+        mode: file
+        params:
+          duckdb_file: /data/my_dataset.db
+```
+
+This creates a StatefulSet with a PersistentVolumeClaim.
+
+## Service Types
+
+### ClusterIP (Default)
+
+Internal cluster access only:
+
+```yaml
+service:
+  type: ClusterIP
+```
+
+### LoadBalancer
+
+External access via cloud load balancer:
+
+```yaml
+service:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+```
+
+### NodePort
+
+Access via node IP and static port:
+
+```yaml
+service:
+  type: NodePort
+  ports:
+    - port: 8090
+      nodePort: 30090
+      name: http
+    - port: 50051
+      nodePort: 30051
+      name: flight
+```
+
+## Advanced Configuration
+
+### Custom Commands
+
+Override default runtime arguments:
+
+```yaml
+command:
+  - /usr/local/bin/spiced
+  - --http
+  - 0.0.0.0:8090
+  - --metrics
+  - 0.0.0.0:9090
+  - --flight
+  - 0.0.0.0:50051
+```
+
+### Environment Variables
+
+Add secrets and configuration:
+
+```yaml
+additionalEnv:
+  - name: AWS_REGION
+    value: us-east-1
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: spice-secrets
+        key: database-url
+  - name: SPICE_SECRET_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: spice-secrets
+        key: api-key
+```
+
+Create the secret:
+
+```bash
+kubectl create secret generic spice-secrets \
+  --from-literal=database-url='postgres://user:pass@host:5432/db' \
+  --from-literal=api-key='your-api-key'
+```
+
+### Volume Mounts
+
+Mount additional volumes:
+
+```yaml
+volumes:
+  - name: custom-config
+    configMap:
+      name: spice-config
+  - name: models
+    persistentVolumeClaim:
+      claimName: models-pvc
+
+volumeMounts:
+  - name: custom-config
+    mountPath: /config
+  - name: models
+    mountPath: /models
+```
+
+### Node Selection and Affinity
+
+```yaml
+nodeSelector:
+  node.kubernetes.io/instance-type: c5.2xlarge
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - spiceai
+          topologyKey: kubernetes.io/hostname
+
+tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "spiceai"
+    effect: "NoSchedule"
+```
+
+## Health and Readiness Probes
+
+The Helm chart includes default probes:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8090
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /v1/ready
+    port: 8090
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: 8090
+  failureThreshold: 30
+  periodSeconds: 10
+```
+
+- **`/health`**: Returns "ok" when runtime is alive
+- **`/v1/ready`**: Returns ready when all datasets are loaded
+
+## Monitoring Integration
+
+### Prometheus ServiceMonitor
+
+Enable Prometheus metrics scraping:
+
+```yaml
+monitoring:
+  podMonitor:
+    enabled: true
+    additionalLabels:
+      prometheus: kube-prometheus
+```
+
+This creates a PodMonitor for Prometheus Operator to scrape metrics from port 9090.
+
+## Multiple Datasets Example
+
+```yaml
+spicepod:
+  name: production-app
+  version: v1
+  kind: Spicepod
+  
+  datasets:
+    - from: postgres:orders
+      name: orders
+      params:
+        connection_string: ${env:POSTGRES_URL}
+      acceleration:
+        enabled: true
+        engine: arrow
+        refresh_mode: full
+        refresh_check_interval: 10s
+    
+    - from: s3://analytics-bucket/clickstream/
+      name: clickstream
+      params:
+        file_format: parquet
+      acceleration:
+        enabled: true
+        engine: duckdb
+        mode: file
+        params:
+          duckdb_file: /data/clickstream.db
+```
+
+## Scaling
+
+### Horizontal Pod Autoscaling
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: spiceai-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: spiceai
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+Note: For distributed query execution across multiple pods, see [Distributed Query](/deployment/distributed-query).
+
+## Ingress
+
+Expose Spice via Ingress:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spiceai-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - spice.example.com
+      secretName: spice-tls
+  rules:
+    - host: spice.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spiceai
+                port:
+                  number: 8090
+```
+
+For Arrow Flight (gRPC), configure gRPC ingress separately or use a LoadBalancer.
+
+## Upgrade and Rollback
+
+### Upgrade to New Version
+
+```bash
+helm repo update
+helm upgrade spiceai spiceai/spiceai -f values.yaml
+```
+
+### Rollback
+
+```bash
+helm rollback spiceai
+```
+
+### View History
+
+```bash
+helm history spiceai
+```
+
+## Uninstall
+
+```bash
+helm uninstall spiceai
+```
+
+Note: PersistentVolumeClaims are not deleted automatically. Delete manually if needed:
+
+```bash
+kubectl delete pvc -l app.kubernetes.io/name=spiceai
+```
+
+## Complete Production Example
+
+```yaml
+image:
+  repository: spiceai/spiceai
+  tag: 1.11.0
+
+replicaCount: 3
+
+service:
+  type: LoadBalancer
+  additionalAnnotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+
+resources:
+  limits:
+    cpu: 4000m
+    memory: 8Gi
+  requests:
+    cpu: 2000m
+    memory: 4Gi
+
+stateful:
+  enabled: true
+  storageClass: gp3
+  size: 50Gi
+  mountPath: /data
+
+additionalEnv:
+  - name: AWS_REGION
+    value: us-west-2
+  - name: POSTGRES_CONNECTION
+    valueFrom:
+      secretKeyRef:
+        name: database-credentials
+        key: connection-string
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app
+              operator: In
+              values:
+                - spiceai
+        topologyKey: kubernetes.io/hostname
+
+monitoring:
+  podMonitor:
+    enabled: true
+    additionalLabels:
+      prometheus: main
+
+spicepod:
+  name: production
+  version: v1
+  kind: Spicepod
+  datasets:
+    - from: postgres:transactions
+      name: transactions
+      params:
+        connection_string: ${env:POSTGRES_CONNECTION}
+      acceleration:
+        enabled: true
+        engine: duckdb
+        mode: file
+        params:
+          duckdb_file: /data/transactions.db
+        refresh_mode: full
+        refresh_check_interval: 5m
+```
+
+## Next Steps
+
+- [Distributed Query](/deployment/distributed-query) - Multi-node query execution with Apache Ballista
+- [Monitoring](/deployment/monitoring) - Configure observability and metrics
+- [Configuration](/deployment/configuration) - Advanced runtime configuration

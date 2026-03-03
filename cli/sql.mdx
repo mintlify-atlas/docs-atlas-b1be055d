@@ -1,0 +1,313 @@
+---
+title: 'spice sql'
+description: 'Interactive SQL REPL for querying data'
+---
+
+The `spice sql` command starts an interactive SQL REPL (Read-Eval-Print Loop) for querying data through the Spice runtime.
+
+## Usage
+
+```bash
+spice sql [OPTIONS]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint <URL>` | `http://localhost:50051` | Remote Spice instance gRPC endpoint (supports `http://`, `https://`, `grpc://`, `grpc+tls://`) |
+| `--flight-endpoint <URL>` | - | (Deprecated) Use `--endpoint` instead |
+| `--cache-control <MODE>` | `cache` | Cache control: `cache` or `no-cache` |
+| `--tls-root-certificate-file <PATH>` | - | Path to root certificate for TLS verification |
+| `--headers <KEY:VALUE>` | - | Custom HTTP headers (can be specified multiple times) |
+
+## Global Options
+
+Inherits [global flags](/cli/overview#global-flags) from the CLI:
+
+- `--api-key <KEY>` - API key for authentication
+- `--cloud` - Connect to Spice Cloud
+- `--http-endpoint <URL>` - HTTP endpoint for runtime metadata
+
+## REPL Features
+
+### Command History
+
+The REPL maintains command history across sessions in `~/.spice/sql_history.txt`. Use arrow keys to navigate:
+
+- **Up/Down:** Navigate command history
+- **Ctrl+R:** Reverse search history
+
+### Multi-line Queries
+
+Queries can span multiple lines. The REPL executes when it detects a complete statement (ends with `;`).
+
+```sql
+spice> SELECT 
+       id, 
+       name 
+     FROM users 
+     WHERE active = true;
+```
+
+### Special Commands
+
+| Command | Description |
+|---------|-------------|
+| `help` | Show help information |
+| `exit`, `quit` | Exit the REPL |
+| `.exit`, `.quit` | Exit the REPL |
+| `.clear` | Clear the screen |
+
+## Examples
+
+### Basic Usage
+
+Connect to local runtime:
+
+```bash
+spice run &  # Start runtime in background
+spice sql
+```
+
+**Output:**
+```
+Welcome to the Spice.ai SQL REPL! Type 'help' for help.
+
+spice> 
+```
+
+### Query Datasets
+
+```sql
+spice> SHOW TABLES;
++----------------+
+| table_name     |
++----------------+
+| users          |
+| orders         |
+| products       |
++----------------+
+
+spice> SELECT COUNT(*) FROM users;
++---------+
+| count   |
++---------+
+| 1,234   |
++---------+
+Time: 0.023 seconds
+
+spice> SELECT * FROM users LIMIT 3;
++----+----------+-------------------+
+| id | name     | email             |
++----+----------+-------------------+
+| 1  | Alice    | alice@example.com |
+| 2  | Bob      | bob@example.com   |
+| 3  | Charlie  | charlie@ex...     |
++----+----------+-------------------+
+Time: 0.045 seconds
+```
+
+### Aggregations
+
+```sql
+spice> SELECT 
+         status, 
+         COUNT(*) as count,
+         AVG(total) as avg_total
+       FROM orders 
+       GROUP BY status;
++------------+-------+-----------+
+| status     | count | avg_total |
++------------+-------+-----------+
+| pending    | 45    | 128.50    |
+| completed  | 892   | 245.75    |
+| cancelled  | 23    | 98.20     |
++------------+-------+-----------+
+Time: 0.156 seconds
+```
+
+### Connect to Remote Runtime
+
+```bash
+spice sql --endpoint https://remote-host:50051
+```
+
+With custom headers:
+
+```bash
+spice sql \
+  --endpoint https://remote-host:50051 \
+  --headers "X-Custom-Auth:token123" \
+  --headers "X-Tenant-ID:acme"
+```
+
+### Connect to Spice Cloud
+
+```bash
+export SPICE_API_KEY=your_api_key
+spice sql --cloud
+```
+
+Or inline:
+
+```bash
+spice sql --cloud --api-key your_api_key
+```
+
+### Disable Query Cache
+
+Force fresh results:
+
+```bash
+spice sql --cache-control no-cache
+```
+
+### TLS Connection
+
+```bash
+spice sql \
+  --endpoint https://secure-host:50051 \
+  --tls-root-certificate-file /path/to/ca-cert.pem
+```
+
+## Endpoint Schemes
+
+The `--endpoint` flag supports multiple schemes:
+
+| Scheme | Converted To | Description |
+|--------|-------------|-------------|
+| `http://` | `http://` | HTTP (insecure) |
+| `https://` | `https://` | HTTPS (TLS) |
+| `grpc://` | `http://` | gRPC over HTTP |
+| `grpc+tls://` | `https://` | gRPC over TLS |
+
+## Cache Control
+
+Control whether queries use cached results:
+
+### Cache Mode (Default)
+
+```bash
+spice sql --cache-control cache
+```
+
+Uses cached results when available. Cache status appears in query results:
+
+```sql
+spice> SELECT * FROM large_table;
++----+-------+
+| id | value |
++----+-------+
+...
+Time: 0.003 seconds (cached)
+```
+
+### No-Cache Mode
+
+```bash
+spice sql --cache-control no-cache
+```
+
+Forces re-execution of every query, bypassing cache.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Cancel current query or exit if empty |
+| `Ctrl+D` | Exit REPL |
+| `Ctrl+L` | Clear screen (or use `.clear`) |
+| `Up/Down` | Navigate command history |
+| `Ctrl+R` | Reverse search history |
+| `Tab` | Auto-complete (table/column names) |
+| `Ctrl+A` | Move to beginning of line |
+| `Ctrl+E` | Move to end of line |
+
+## Query Output Formats
+
+By default, results are displayed in a table. Long strings are truncated with `...`.
+
+### Wide Tables
+
+For tables wider than terminal width, columns wrap or truncate:
+
+```sql
+spice> SELECT * FROM wide_table;
++----+-------+-------+-------+
+| id | col1  | col2  | col3  |
++----+-------+-------+-------+
+| 1  | value | val.. | va... |
++----+-------+-------+-------+
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SPICE_API_KEY` | API key for authentication |
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Normal exit (via `exit`, `quit`, or Ctrl+D) |
+| `1` | Connection error or runtime unavailable |
+
+## Troubleshooting
+
+### Connection Refused
+
+Ensure runtime is running:
+
+```bash
+spice run &
+spice sql
+```
+
+### Authentication Failed
+
+Provide API key:
+
+```bash
+spice sql --api-key your_api_key
+```
+
+### TLS Verification Failed
+
+Provide certificate:
+
+```bash
+spice sql \
+  --endpoint https://host:50051 \
+  --tls-root-certificate-file /path/to/ca.pem
+```
+
+### No Tables Available
+
+Check runtime logs and verify datasets are configured:
+
+```sql
+spice> SHOW TABLES;
+(no tables)
+```
+
+Verify `spicepod.yaml` has datasets defined and runtime loaded them successfully.
+
+## Related Commands
+
+- [`spice run`](/cli/run) - Start the Spice runtime
+- [`spice dataset configure`](/cli/dataset) - Configure datasets
+- [`spice search`](/cli/search) - Semantic search REPL
+
+## SQL Dialect
+
+Spice uses DataFusion SQL, which supports:
+
+- Standard SQL: `SELECT`, `JOIN`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`
+- Window functions: `ROW_NUMBER()`, `RANK()`, `LAG()`, `LEAD()`
+- Common table expressions (CTEs): `WITH ... AS`
+- JSON functions: `json_extract()`, `json_get()`
+- Date/time functions: `date_trunc()`, `date_part()`
+
+See [DataFusion SQL Reference](https://arrow.apache.org/datafusion/user-guide/sql/) for full syntax.

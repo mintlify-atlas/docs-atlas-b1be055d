@@ -1,0 +1,278 @@
+---
+title: 'PostgreSQL Data Connector'
+description: 'Connect Spice to PostgreSQL databases for federated SQL queries and data acceleration'
+---
+
+The PostgreSQL connector enables Spice to query PostgreSQL databases with full query push-down support, connection pooling, and bidirectional data sync capabilities.
+
+## Status
+
+**Stable** - Production-ready with comprehensive testing
+
+## Supported Features
+
+- Full SQL query push-down (WHERE, JOIN, aggregations)
+- Connection pooling for high performance
+- SSL/TLS support
+- Read and write operations
+- Data acceleration
+- DELETE operations
+- Transaction support
+- Schema introspection
+
+## Configuration
+
+### Basic Configuration
+
+```yaml
+version: v1
+kind: Spicepod
+name: postgres-demo
+
+datasets:
+  - from: postgres:public.users
+    name: users
+    params:
+      pg_host: localhost
+      pg_port: 5432
+      pg_db: mydb
+      pg_user: postgres
+      pg_pass: ${secrets:pg_password}
+```
+
+### With SSL/TLS
+
+```yaml
+datasets:
+  - from: postgres:public.orders
+    name: orders
+    params:
+      pg_host: db.example.com
+      pg_port: 5432
+      pg_db: production
+      pg_user: app_user
+      pg_pass: ${secrets:pg_password}
+      pg_sslmode: require
+```
+
+### With Connection Pool Configuration
+
+```yaml
+datasets:
+  - from: postgres:analytics.sales
+    name: sales
+    params:
+      pg_host: ${env:PG_HOST}
+      pg_port: 5432
+      pg_db: warehouse
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+      connection_pool_size: 10
+```
+
+### With Acceleration
+
+```yaml
+datasets:
+  - from: postgres:public.transactions
+    name: transactions
+    params:
+      pg_host: postgres.internal
+      pg_port: 5432
+      pg_db: finance
+      pg_user: spice
+      pg_pass: ${secrets:pg_password}
+      pg_sslmode: disable
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 30s
+```
+
+## Parameters
+
+<ParamField path="pg_host" type="string" required>
+  PostgreSQL server hostname or IP address
+</ParamField>
+
+<ParamField path="pg_port" type="integer" default="5432">
+  PostgreSQL server port
+</ParamField>
+
+<ParamField path="pg_db" type="string" required>
+  Database name
+</ParamField>
+
+<ParamField path="pg_user" type="string" required>
+  Database user
+</ParamField>
+
+<ParamField path="pg_pass" type="string" required>
+  Database password
+</ParamField>
+
+<ParamField path="pg_sslmode" type="string" default="prefer">
+  SSL/TLS mode:
+  - `disable`: No SSL
+  - `allow`: Try SSL, fallback to non-SSL
+  - `prefer`: Try SSL, fallback to non-SSL (default)
+  - `require`: Require SSL
+  - `verify-ca`: Require SSL and verify CA
+  - `verify-full`: Require SSL and verify hostname
+</ParamField>
+
+<ParamField path="connection_pool_size" type="integer" default="10">
+  Maximum number of connections in the pool
+</ParamField>
+
+## Authentication
+
+### Password Authentication
+
+Standard username/password authentication:
+
+```yaml
+params:
+  pg_user: myuser
+  pg_pass: ${secrets:pg_password}
+```
+
+### SSL Certificate Authentication
+
+```yaml
+params:
+  pg_sslmode: verify-full
+  pg_sslcert: /path/to/client-cert.pem
+  pg_sslkey: /path/to/client-key.pem
+  pg_sslrootcert: /path/to/ca-cert.pem
+```
+
+## Use Cases
+
+### Federated Query Across Tables
+
+```yaml
+datasets:
+  - from: postgres:public.customers
+    name: customers
+    params: &pg_params
+      pg_host: ${env:PG_HOST}
+      pg_port: 5432
+      pg_db: ecommerce
+      pg_user: app
+      pg_pass: ${secrets:pg_password}
+
+  - from: postgres:public.orders
+    name: orders
+    params: *pg_params
+```
+
+Query across datasets:
+
+```sql
+SELECT c.name, COUNT(o.id) as order_count
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+GROUP BY c.name;
+```
+
+### Real-Time Dashboard with Acceleration
+
+```yaml
+datasets:
+  - from: postgres:metrics.api_requests
+    name: api_metrics
+    params:
+      pg_host: metrics-db.internal
+      pg_port: 5432
+      pg_db: monitoring
+      pg_user: readonly
+      pg_pass: ${secrets:pg_password}
+      pg_sslmode: require
+    acceleration:
+      enabled: true
+      engine: arrow
+      refresh_interval: 5s  # Real-time updates
+```
+
+### Multi-Database Federation
+
+```yaml
+datasets:
+  - from: postgres:public.users
+    name: prod_users
+    params:
+      pg_host: prod-db.example.com
+      pg_db: production
+      pg_user: readonly
+      pg_pass: ${secrets:prod_pg_password}
+
+  - from: postgres:public.users
+    name: staging_users
+    params:
+      pg_host: staging-db.example.com
+      pg_db: staging
+      pg_user: readonly
+      pg_pass: ${secrets:staging_pg_password}
+```
+
+Compare environments:
+
+```sql
+SELECT 
+  'prod' as env, COUNT(*) as user_count 
+FROM prod_users
+UNION ALL
+SELECT 
+  'staging' as env, COUNT(*) as user_count 
+FROM staging_users;
+```
+
+### Write-Back to PostgreSQL
+
+Configure dataset with write support:
+
+```yaml
+datasets:
+  - from: postgres:public.audit_log
+    name: audit_log
+    params:
+      pg_host: localhost
+      pg_db: audit
+      pg_user: writer
+      pg_pass: ${secrets:pg_password}
+    mode: readwrite  # Enable writes
+```
+
+Insert data:
+
+```sql
+INSERT INTO audit_log (timestamp, user_id, action)
+VALUES (NOW(), 123, 'login');
+```
+
+Delete data:
+
+```sql
+DELETE FROM audit_log WHERE timestamp < NOW() - INTERVAL '30 days';
+```
+
+## Performance Tips
+
+1. **Connection Pooling**: Adjust `connection_pool_size` based on concurrent query load
+2. **Query Push-down**: Spice automatically pushes filters, joins, and aggregations to PostgreSQL
+3. **Acceleration**: Enable for frequently queried large tables (>1M rows)
+4. **Indexes**: Ensure proper indexes exist in PostgreSQL for pushed-down queries
+5. **SSL Overhead**: Use `pg_sslmode: disable` for internal networks to reduce latency
+
+## Limitations
+
+- PostgreSQL-specific data types (arrays, JSON) are supported with automatic conversion
+- Large transactions may require timeout adjustments
+- Connection pool exhaustion will queue queries
+
+## Related Resources
+
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
+- [Data Acceleration Guide](https://spiceai.org/docs/components/data-accelerators)
+- [Spice Cookbook Examples](https://github.com/spiceai/cookbook)

@@ -1,122 +1,201 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Spice.ai",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#E25D3B",
+    "light": "#E25D3B",
+    "dark": "#E25D3B"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/spiceai/spiceai"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/spiceai/spiceai",
+      "x": "https://x.com/spice_ai",
+      "slack": "https://spiceai.org/slack"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/data-federation",
+              "concepts/data-acceleration",
+              "concepts/search",
+              "concepts/ai-inference",
+              "concepts/spicepods"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Data Connectors",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "connectors/overview",
+              "connectors/s3",
+              "connectors/postgres",
+              "connectors/mysql",
+              "connectors/databricks",
+              "connectors/snowflake",
+              "connectors/duckdb",
+              "connectors/clickhouse",
+              "connectors/mongodb"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Data Accelerators",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "accelerators/overview",
+              "accelerators/arrow",
+              "accelerators/duckdb",
+              "accelerators/sqlite",
+              "accelerators/postgres",
+              "accelerators/cayenne"
+            ]
+          },
+          {
+            "group": "Search",
+            "pages": [
+              "search/overview",
+              "search/vector-search",
+              "search/full-text-search",
+              "search/keyword-search",
+              "search/hybrid-search",
+              "search/s3-vectors"
+            ]
+          },
+          {
+            "group": "AI & ML",
+            "pages": [
+              "ai/overview",
+              "ai/openai-compatibility",
+              "ai/model-providers",
+              "ai/embeddings",
+              "ai/rag",
+              "ai/mcp-integration"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/distributed-query",
+              "deployment/configuration",
+              "deployment/monitoring"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Query APIs",
             "pages": [
-              "api-reference/introduction"
+              "api/sql",
+              "api/arrow-flight",
+              "api/arrow-flight-sql",
+              "api/odbc",
+              "api/jdbc",
+              "api/adbc"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "AI APIs",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/openai-chat",
+              "api/openai-embeddings",
+              "api/inference",
+              "api/nsql"
+            ]
+          },
+          {
+            "group": "HTTP APIs",
+            "pages": [
+              "api/http-query",
+              "api/datasets",
+              "api/models",
+              "api/catalogs",
+              "api/search-api"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "api/iceberg-catalog",
+              "api/mcp"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/run",
+              "cli/sql",
+              "cli/add",
+              "cli/dataset",
+              "cli/model",
+              "cli/search",
+              "cli/upgrade"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Extensibility",
+            "pages": [
+              "advanced/custom-connectors",
+              "advanced/custom-accelerators",
+              "advanced/catalog-connectors",
+              "advanced/secret-stores"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "advanced/query-optimization",
+              "advanced/caching",
+              "advanced/partitioning",
+              "advanced/snapshots"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "advanced/authentication",
+              "advanced/authorization",
+              "advanced/tls",
+              "advanced/secrets"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

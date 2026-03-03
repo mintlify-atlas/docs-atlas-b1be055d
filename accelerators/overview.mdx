@@ -1,0 +1,208 @@
+---
+title: 'Data Accelerators Overview'
+description: 'Choose the right data accelerator for your workload'
+---
+
+Data accelerators in Spice materialize and cache data locally for fast query performance. Spice supports both OLAP (analytical) and OLTP (transactional) acceleration engines at the dataset level.
+
+## Comparison Table
+
+| Accelerator | Engine Modes     | Status            | Best For                          |
+|-------------|------------------|-------------------|-----------------------------------|
+| Arrow       | `memory`         | Stable            | In-memory OLAP, fast queries      |
+| DuckDB      | `memory`, `file` | Stable            | OLAP analytics, aggregations      |
+| SQLite      | `memory`, `file` | Release Candidate | OLTP transactional workloads      |
+| PostgreSQL  | N/A (attached)   | Release Candidate | OLTP with PostgreSQL features     |
+| Cayenne     | `file`           | Stable            | Multi-file OLAP, append-heavy     |
+
+## OLAP vs OLTP Accelerators
+
+### OLAP (Analytical Processing)
+
+Optimized for read-heavy analytical queries with aggregations, scans, and complex joins.
+
+- **Arrow**: In-memory columnar format, fastest for analytical queries
+- **DuckDB**: Embedded analytical database with excellent aggregation performance
+- **Cayenne**: Vortex-based format for multi-file acceleration without single-file scaling limits
+
+### OLTP (Transactional Processing)
+
+Optimized for transactional workloads with frequent inserts, updates, and point queries.
+
+- **SQLite**: Lightweight embedded database, ideal for row-based operations
+- **PostgreSQL**: Full-featured relational database with ACID guarantees
+
+## Engine Modes
+
+Accelerators support different storage modes:
+
+### Memory Mode
+
+Data stored in RAM. Fast but volatile (lost on restart).
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: memory
+```
+
+### File Mode
+
+Data persisted to disk. Survives restarts and supports larger datasets.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+  params:
+    duckdb_file: /data/my_dataset.duckdb
+```
+
+### File Create Mode
+
+Deletes existing file and creates fresh on startup.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file_create
+```
+
+## Refresh Modes
+
+Control how data is loaded from the source:
+
+### Full Refresh
+
+Completely replaces accelerated data on each refresh.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  refresh_mode: full
+  refresh_interval: 1h
+```
+
+### Append Mode
+
+Appends only new data based on a time column.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  refresh_mode: append
+  refresh_interval: 5m
+  time_column: created_at
+```
+
+### Caching Mode
+
+Stores query results for fast repeated access.
+
+```yaml
+acceleration:
+  enabled: true
+  engine: arrow
+  refresh_mode: caching
+  refresh_interval: 10s
+```
+
+## Acceleration Snapshots
+
+Bootstrap accelerations from S3 for fast cold starts (seconds vs minutes).
+
+```yaml
+acceleration:
+  enabled: true
+  engine: duckdb
+  mode: file
+  snapshot:
+    enabled: true
+    source: s3://my-bucket/snapshots/
+    refresh: true
+```
+
+Snapshots support ephemeral storage with persistent recovery, ideal for serverless and containerized deployments.
+
+## Refresh Intervals
+
+Configure automatic data refresh:
+
+```yaml
+acceleration:
+  enabled: true
+  refresh_interval: 30m  # 30 minutes
+```
+
+Supported formats:
+- Seconds: `30s`
+- Minutes: `5m`
+- Hours: `2h`
+- Days: `1d`
+
+## Choosing an Accelerator
+
+### Use Arrow when:
+- Data fits in memory
+- You need maximum query speed
+- Analytical workload (aggregations, scans)
+- Simple refresh patterns (full replace)
+
+### Use DuckDB when:
+- Analytical workload with complex SQL
+- Data exceeds available memory (use file mode)
+- You need advanced aggregations and window functions
+- Dataset can fit in a single file (&lt;100GB typical)
+
+### Use Cayenne when:
+- Append-heavy workloads (time-series, logs)
+- Data grows continuously
+- You need multi-file support without single-file limits
+- Vortex columnar format benefits (compression, SIMD)
+
+### Use SQLite when:
+- Transactional workload (frequent updates)
+- Row-based point queries
+- ACID guarantees required
+- Lightweight embedded database preferred
+
+### Use PostgreSQL when:
+- Need full PostgreSQL features (constraints, triggers)
+- Multi-dataset federation required
+- Existing PostgreSQL infrastructure
+- Advanced indexing and query optimization
+
+## Configuration Example
+
+Complete dataset with acceleration:
+
+```yaml
+datasets:
+  - name: sales_data
+    from: s3://data-lake/sales/
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      refresh_mode: append
+      refresh_interval: 5m
+      time_column: order_date
+      params:
+        duckdb_file: /data/sales.duckdb
+      snapshot:
+        enabled: true
+        source: s3://snapshots/sales/
+```
+
+## Next Steps
+
+- [Arrow Accelerator](/accelerators/arrow) - In-memory columnar acceleration
+- [DuckDB Accelerator](/accelerators/duckdb) - Analytical database acceleration
+- [Cayenne Accelerator](/accelerators/cayenne) - Multi-file Vortex acceleration
+- [SQLite Accelerator](/accelerators/sqlite) - Transactional database acceleration
+- [PostgreSQL Accelerator](/accelerators/postgres) - Full PostgreSQL acceleration

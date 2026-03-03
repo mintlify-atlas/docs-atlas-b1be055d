@@ -1,0 +1,285 @@
+---
+title: 'Docker Deployment'
+description: 'Deploy Spice.ai runtime using Docker containers'
+---
+
+## Overview
+
+Spice.ai provides official Docker images for easy deployment of the runtime (`spiced`) in containerized environments. The images are built from scratch for minimal attack surface and optimized size.
+
+## Quick Start
+
+### Pull the Docker Image
+
+```bash
+docker pull spiceai/spiceai
+```
+
+The official Docker image is available at [hub.docker.com/r/spiceai/spiceai](https://hub.docker.com/r/spiceai/spiceai).
+
+### Run a Container
+
+```bash
+docker run -p 8090:8090 -p 50051:50051 spiceai/spiceai
+```
+
+This starts the Spice runtime with:
+- **Port 8090**: HTTP/REST API
+- **Port 50051**: Arrow Flight RPC
+
+## Using in a Dockerfile
+
+Extend the Spice image with your spicepod configuration:
+
+```dockerfile
+FROM spiceai/spiceai:latest
+
+# Copy your spicepod configuration
+COPY spicepod.yaml /app/spicepod.yaml
+
+# Optional: Copy additional files (datasets, models, etc.)
+COPY ./data /app/data
+```
+
+## Image Variants
+
+Spice.ai provides multiple image tags:
+
+| Tag | Description | Use Case |
+|-----|-------------|----------|
+| `latest` | Latest stable release | Production deployments |
+| `latest-models` | Includes ML/LLM model support | AI/ML workloads |
+| `nightly` | Development builds from trunk | Testing new features |
+| `X.Y.Z` | Specific version (e.g., `1.11.0`) | Version pinning |
+
+### CUDA Support
+
+For GPU-accelerated inference:
+
+```bash
+docker pull spiceai/spiceai:latest-cuda
+```
+
+Requires NVIDIA Docker runtime and compatible GPU.
+
+## Port Configuration
+
+The runtime exposes three main ports:
+
+| Port | Protocol | Description |
+|------|----------|-------------|
+| 8090 | HTTP | REST API, health checks, queries |
+| 9090 | HTTP | Prometheus metrics endpoint |
+| 50051 | gRPC | Arrow Flight SQL, Flight RPC |
+
+Override default ports using command-line arguments:
+
+```bash
+docker run -p 3000:3000 -p 4000:4000 spiceai/spiceai \
+  --http 0.0.0.0:3000 \
+  --flight 0.0.0.0:4000 \
+  --metrics 0.0.0.0:9090
+```
+
+## Volume Mounts
+
+### Configuration
+
+Mount your spicepod configuration:
+
+```bash
+docker run -v $(pwd)/spicepod.yaml:/app/spicepod.yaml \
+  -p 8090:8090 -p 50051:50051 \
+  spiceai/spiceai
+```
+
+### Persistent Data
+
+For file-based accelerators (DuckDB, SQLite, Cayenne):
+
+```bash
+docker run -v spice-data:/data \
+  -v $(pwd)/spicepod.yaml:/app/spicepod.yaml \
+  -p 8090:8090 -p 50051:50051 \
+  spiceai/spiceai
+```
+
+Configure acceleration to use the mounted volume:
+
+```yaml
+datasets:
+  - from: s3://my-bucket/data/
+    name: my_dataset
+    acceleration:
+      enabled: true
+      engine: duckdb
+      mode: file
+      params:
+        duckdb_file: /data/my_dataset.db
+```
+
+## Environment Variables
+
+Common environment variables:
+
+```bash
+docker run \
+  -e SPICE_SECRET_FOO="my-secret" \
+  -e AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE" \
+  -e AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" \
+  -p 8090:8090 -p 50051:50051 \
+  spiceai/spiceai
+```
+
+Secrets can be referenced in spicepod.yaml:
+
+```yaml
+secrets:
+  - from: env
+    name: env
+
+datasets:
+  - from: postgres:my_table
+    name: my_table
+    params:
+      connection_string: ${env:DATABASE_URL}
+```
+
+## Security
+
+### Running as Non-Root
+
+Spice images run as user `nobody` (UID 65534) by default for security:
+
+```dockerfile
+USER 65534:65534
+```
+
+Ensure mounted volumes have appropriate permissions:
+
+```bash
+sudo chown -R 65534:65534 ./data
+```
+
+### Read-Only Root Filesystem
+
+For enhanced security, run with read-only root:
+
+```bash
+docker run --read-only \
+  -v spice-data:/data \
+  -v $(pwd)/spicepod.yaml:/app/spicepod.yaml \
+  -p 8090:8090 -p 50051:50051 \
+  spiceai/spiceai
+```
+
+## Health Checks
+
+Add Docker health checks:
+
+```dockerfile
+FROM spiceai/spiceai:latest
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8090/health || exit 1
+
+COPY spicepod.yaml /app/spicepod.yaml
+```
+
+Or in docker-compose.yml:
+
+```yaml
+services:
+  spiceai:
+    image: spiceai/spiceai:latest
+    ports:
+      - "8090:8090"
+      - "50051:50051"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./spicepod.yaml:/app/spicepod.yaml
+      - spice-data:/data
+
+volumes:
+  spice-data:
+```
+
+## Docker Compose Example
+
+Complete example with PostgreSQL acceleration:
+
+```yaml
+version: '3.8'
+
+services:
+  spiceai:
+    image: spiceai/spiceai:latest
+    ports:
+      - "8090:8090"
+      - "9090:9090"
+      - "50051:50051"
+    environment:
+      - SPICE_SECRET_POSTGRES_PASS=mypassword
+    volumes:
+      - ./spicepod.yaml:/app/spicepod.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: spiceai
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+```
+
+## Resource Limits
+
+Set CPU and memory limits:
+
+```bash
+docker run \
+  --memory="2g" \
+  --cpus="2.0" \
+  -p 8090:8090 -p 50051:50051 \
+  spiceai/spiceai
+```
+
+In docker-compose.yml:
+
+```yaml
+services:
+  spiceai:
+    image: spiceai/spiceai:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+```
+
+## Next Steps
+
+- [Kubernetes Deployment](/deployment/kubernetes) - Deploy to Kubernetes with Helm
+- [Monitoring](/deployment/monitoring) - Set up observability and metrics
+- [Configuration](/deployment/configuration) - Runtime configuration options

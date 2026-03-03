@@ -1,0 +1,538 @@
+---
+title: 'Observability and Monitoring'
+description: 'Monitor Spice.ai runtime health, performance, and metrics'
+---
+
+## Overview
+
+Spice.ai provides comprehensive observability through Prometheus metrics, health endpoints, and OpenTelemetry integration. Monitor runtime performance, query execution, data acceleration, and cluster health.
+
+## Health Endpoints
+
+### Liveness Probe: `/health`
+
+Returns "ok" when the runtime process is alive:
+
+```bash
+curl http://localhost:8090/health
+# ok
+```
+
+- **Use for**: Kubernetes liveness probes, load balancer health checks
+- **Always returns 200 OK** when the process is running
+- **Fast response** (< 1ms typical)
+
+### Readiness Probe: `/v1/ready`
+
+Returns ready status when all datasets are loaded and the runtime is ready to serve queries:
+
+```bash
+curl http://localhost:8090/v1/ready
+```
+
+Response when ready:
+```json
+{
+  "ready": true
+}
+```
+
+Response when not ready:
+```json
+{
+  "ready": false,
+  "pending_components": ["dataset:large_table"]
+}
+```
+
+- **Use for**: Kubernetes readiness probes, ensuring traffic only reaches ready instances
+- **Returns 503 Service Unavailable** when datasets are still loading
+- **Returns 200 OK** when all datasets are loaded
+
+### Kubernetes Configuration
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spiceai
+spec:
+  containers:
+    - name: spiceai
+      image: spiceai/spiceai:latest
+      ports:
+        - containerPort: 8090
+          name: http
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8090
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+      readinessProbe:
+        httpGet:
+          path: /v1/ready
+          port: 8090
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
+        successThreshold: 1
+        failureThreshold: 3
+      startupProbe:
+        httpGet:
+          path: /health
+          port: 8090
+        initialDelaySeconds: 0
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 30
+```
+
+## Prometheus Metrics
+
+### Metrics Endpoint
+
+Expose Prometheus metrics on port 9090:
+
+```bash
+spiced --metrics 0.0.0.0:9090
+```
+
+Scrape metrics:
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+### Key Runtime Metrics
+
+#### Query Execution
+
+```prometheus
+# Query latency histogram
+spice_runtime_query_duration_seconds{status="success"}
+
+# Active queries
+spice_runtime_active_queries
+
+# Query throughput
+rate(spice_runtime_query_total[5m])
+
+# Query errors
+rate(spice_runtime_query_errors_total[5m])
+```
+
+#### Dataset Acceleration
+
+```prometheus
+# Acceleration refresh duration
+dataset_refresh_duration_seconds{dataset="my_dataset"}
+
+# Rows loaded per dataset
+dataset_rows_loaded{dataset="my_dataset"}
+
+# Memory used by accelerated datasets
+dataset_memory_bytes{dataset="my_dataset"}
+
+# Refresh errors
+rate(dataset_refresh_errors_total{dataset="my_dataset"}[5m])
+```
+
+#### Cache Performance
+
+```prometheus
+# Cache hit rate
+rate(spice_cache_hits_total[5m]) / rate(spice_cache_requests_total[5m])
+
+# Cache size
+spice_cache_size_bytes{cache_type="sql_results"}
+
+# Cache evictions
+rate(spice_cache_evictions_total[5m])
+```
+
+#### Resource Usage
+
+```prometheus
+# Memory usage
+process_resident_memory_bytes
+
+# CPU usage
+rate(process_cpu_seconds_total[5m])
+
+# Open file descriptors
+process_open_fds
+
+# Thread count
+process_threads
+```
+
+### Cluster Metrics (Distributed Mode)
+
+When running in cluster mode, access cluster-wide metrics:
+
+```bash
+curl http://scheduler:9090/metrics?scope=cluster
+```
+
+Cluster-specific metrics:
+
+```prometheus
+# Active executors
+cluster_active_executors
+
+# Tasks distributed per executor
+cluster_executor_tasks_total{executor_id="executor-1"}
+
+# Executor resource utilization
+cluster_executor_cpu_utilization{executor_id="executor-1"}
+cluster_executor_memory_bytes{executor_id="executor-1"}
+
+# Inter-executor data shuffle
+cluster_shuffle_bytes_total
+```
+
+### Prometheus Configuration
+
+Scrape configuration for prometheus.yml:
+
+```yaml
+scrape_configs:
+  - job_name: 'spiceai'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+    scrape_timeout: 10s
+```
+
+Kubernetes service discovery:
+
+```yaml
+scrape_configs:
+  - job_name: 'spiceai-k8s'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - default
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: spiceai
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: metrics
+```
+
+## Prometheus Operator Integration
+
+For Kubernetes deployments using Prometheus Operator:
+
+### PodMonitor Resource
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: spiceai-podmonitor
+  labels:
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: spiceai
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+```
+
+Enable in Helm chart:
+
+```yaml
+monitoring:
+  podMonitor:
+    enabled: true
+    additionalLabels:
+      prometheus: kube-prometheus
+```
+
+## Grafana Dashboards
+
+### Import Dashboard
+
+Use the official Spice.ai Grafana dashboard:
+
+1. Download dashboard JSON from [GitHub](https://github.com/spiceai/spiceai/tree/trunk/dashboards)
+2. Import in Grafana: **Dashboards** → **Import** → paste JSON
+3. Select your Prometheus datasource
+
+### Key Panels
+
+- **Query Performance**: Latency percentiles (p50, p95, p99), throughput
+- **Dataset Status**: Refresh times, row counts, memory usage
+- **Cache Efficiency**: Hit rates, eviction rates, size trends
+- **Resource Usage**: CPU, memory, network I/O
+- **Error Rates**: Query errors, refresh failures, connection errors
+
+### Sample PromQL Queries
+
+Query latency 95th percentile:
+```promql
+histogram_quantile(0.95, 
+  rate(spice_runtime_query_duration_seconds_bucket[5m])
+)
+```
+
+Dataset refresh success rate:
+```promql
+sum(rate(dataset_refresh_total{status="success"}[5m])) 
+/ 
+sum(rate(dataset_refresh_total[5m]))
+```
+
+Memory usage per dataset:
+```promql
+topk(10, dataset_memory_bytes)
+```
+
+## OpenTelemetry Integration
+
+### OTLP Metrics Export
+
+Export runtime metrics to OpenTelemetry collectors:
+
+```yaml
+runtime:
+  otel_exporter:
+    endpoint: http://otel-collector:4317
+    push_interval: 60s
+    metrics:
+      - spice_runtime_*
+      - dataset_*
+      - spice_cache_*
+```
+
+Supported endpoints:
+- **gRPC**: `http://host:4317` or `https://host:4317`
+- **HTTP**: `http://host:4318/v1/metrics`
+
+### OpenTelemetry Collector Configuration
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, otlp]
+```
+
+### Task History Export
+
+Export query execution traces to OpenTelemetry:
+
+```yaml
+runtime:
+  task_history:
+    enabled: true
+    otel_endpoint: http://otel-collector:4317
+```
+
+Traces include:
+- Query parsing and planning time
+- Execution time per stage
+- Data source fetch latency
+- Acceleration lookup time
+
+## Alerting
+
+### Prometheus Alerting Rules
+
+```yaml
+groups:
+  - name: spiceai
+    interval: 30s
+    rules:
+      - alert: SpiceAIHighQueryLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(spice_runtime_query_duration_seconds_bucket[5m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High query latency detected"
+          description: "95th percentile query latency is {{ $value }}s"
+      
+      - alert: SpiceAIDatasetRefreshFailing
+        expr: |
+          rate(dataset_refresh_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dataset refresh failures"
+          description: "Dataset {{ $labels.dataset }} is failing to refresh"
+      
+      - alert: SpiceAILowCacheHitRate
+        expr: |
+          rate(spice_cache_hits_total[5m]) 
+          / 
+          rate(spice_cache_requests_total[5m]) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}"
+      
+      - alert: SpiceAIHighMemoryUsage
+        expr: |
+          process_resident_memory_bytes 
+          / 
+          node_memory_MemTotal_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} of available"
+      
+      - alert: SpiceAIClusterExecutorDown
+        expr: |
+          cluster_active_executors < 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster executor unavailable"
+          description: "Only {{ $value }} executor(s) active in cluster"
+```
+
+## Logging
+
+### Log Levels
+
+Control log verbosity:
+
+```bash
+# Environment variable
+export RUST_LOG=info
+
+# Detailed component logging
+export RUST_LOG=runtime=debug,datafusion=info,spice=trace
+```
+
+Levels: `error`, `warn`, `info`, `debug`, `trace`
+
+### Structured Logging
+
+JSON-formatted logs for ingestion:
+
+```bash
+export RUST_LOG_FORMAT=json
+
+spiced
+```
+
+Output:
+```json
+{"timestamp":"2025-03-03T10:15:30.123Z","level":"info","message":"Dataset loaded","dataset":"orders","rows":100000}
+```
+
+### Log Aggregation
+
+Ship logs to centralized logging:
+
+```yaml
+# Fluentd configuration
+<source>
+  @type tail
+  path /var/log/spiced.log
+  pos_file /var/log/spiced.log.pos
+  tag spiceai
+  <parse>
+    @type json
+    time_key timestamp
+    time_format %Y-%m-%dT%H:%M:%S.%LZ
+  </parse>
+</source>
+
+<match spiceai>
+  @type elasticsearch
+  host elasticsearch.default.svc.cluster.local
+  port 9200
+  logstash_format true
+  logstash_prefix spiceai
+</match>
+```
+
+## Status API
+
+Query runtime status programmatically:
+
+```bash
+curl http://localhost:8090/v1/status
+```
+
+Response:
+```json
+{
+  "version": "1.11.0",
+  "datasets": [
+    {
+      "name": "orders",
+      "status": "ready",
+      "rows": 1000000,
+      "last_refresh": "2025-03-03T10:00:00Z"
+    }
+  ],
+  "cluster": {
+    "role": "executor",
+    "scheduler": "https://scheduler:50052",
+    "executors": 3
+  }
+}
+```
+
+## Performance Monitoring Best Practices
+
+1. **Monitor query latency**: Track p50, p95, p99 latencies
+2. **Watch cache hit rates**: Optimize cache sizing and TTLs
+3. **Track dataset refresh times**: Ensure refresh completes within intervals
+4. **Monitor memory usage**: Prevent OOM with proper limits
+5. **Set up alerts**: Proactive detection of issues
+6. **Use distributed tracing**: Track query execution across cluster
+7. **Aggregate logs centrally**: Simplify troubleshooting
+8. **Benchmark regularly**: Detect performance regressions
+
+## Next Steps
+
+- [Configuration](/deployment/configuration) - Configure runtime behavior
+- [Distributed Query](/deployment/distributed-query) - Monitor cluster deployments
+- [Docker Deployment](/deployment/docker) - Container deployment with health checks

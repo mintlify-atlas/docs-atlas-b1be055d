@@ -1,0 +1,319 @@
+---
+title: "OpenAI Embeddings API"
+description: "Generate vector embeddings using OpenAI-compatible API"
+---
+
+Spice provides an OpenAI-compatible Embeddings API at `/v1/embeddings`, allowing you to generate vector representations of text that can be used for semantic search, clustering, recommendations, and other machine learning tasks.
+
+## Endpoint
+
+```
+POST /v1/embeddings
+```
+
+## Authentication
+
+Include your Spice API key in the request headers:
+
+```bash
+Authorization: Bearer <your-api-key>
+```
+
+## Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `model` | string | Yes | The embedding model to use (e.g., `text-embedding-ada-002`, `text-embedding-3-small`) |
+| `input` | string or array | Yes | Text string or array of strings to embed |
+| `encoding_format` | string | No | Format for embeddings: `float` (default) or `base64` |
+| `dimensions` | integer | No | Number of dimensions for the embedding (model-specific) |
+| `user` | string | No | Unique identifier for the end-user |
+
+## Request Body
+
+```json
+{
+  "input": "The food was delicious and the waiter was very friendly.",
+  "model": "text-embedding-ada-002",
+  "encoding_format": "float"
+}
+```
+
+### Batch Embeddings
+
+You can embed multiple texts in a single request:
+
+```json
+{
+  "input": [
+    "First document text",
+    "Second document text",
+    "Third document text"
+  ],
+  "model": "text-embedding-3-small"
+}
+```
+
+## Response Format
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [
+        0.0023064255,
+        -0.009327292,
+        -0.0028842222,
+        ...
+      ],
+      "index": 0
+    }
+  ],
+  "model": "text-embedding-ada-002",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `object` | string | Always `"list"` |
+| `data` | array | Array of embedding objects |
+| `data[].object` | string | Always `"embedding"` |
+| `data[].embedding` | array | Vector representation (array of floats) |
+| `data[].index` | integer | Position in the input array |
+| `model` | string | The model used to generate embeddings |
+| `usage.prompt_tokens` | integer | Number of tokens in the input |
+| `usage.total_tokens` | integer | Total tokens processed |
+
+## Examples
+
+### cURL
+
+```bash
+curl -X POST http://localhost:8090/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "input": "Machine learning is transforming how we analyze data.",
+    "model": "text-embedding-ada-002",
+    "encoding_format": "float"
+  }'
+```
+
+### Batch Embedding Example
+
+```bash
+curl -X POST http://localhost:8090/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "input": [
+      "Data engineering pipelines",
+      "Machine learning models",
+      "Business intelligence dashboards"
+    ],
+    "model": "text-embedding-3-small"
+  }'
+```
+
+### OpenAI Python SDK
+
+```python
+from openai import OpenAI
+
+# Point the OpenAI client to your Spice instance
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="<your-api-key>"
+)
+
+response = client.embeddings.create(
+    model="text-embedding-ada-002",
+    input="Spice provides unified access to data and AI."
+)
+
+embedding = response.data[0].embedding
+print(f"Embedding dimension: {len(embedding)}")
+print(f"First 5 values: {embedding[:5]}")
+```
+
+### Batch Embeddings (Python)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8090/v1",
+    api_key="<your-api-key>"
+)
+
+texts = [
+    "Real-time data acceleration",
+    "SQL query federation",
+    "Vector search capabilities"
+]
+
+response = client.embeddings.create(
+    model="text-embedding-3-small",
+    input=texts
+)
+
+for i, embedding_obj in enumerate(response.data):
+    print(f"Text {i}: {len(embedding_obj.embedding)} dimensions")
+```
+
+### OpenAI Node.js SDK
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:8090/v1',
+  apiKey: '<your-api-key>'
+});
+
+const response = await client.embeddings.create({
+  model: 'text-embedding-ada-002',
+  input: 'Spice accelerates data and AI applications.',
+  encoding_format: 'float'
+});
+
+const embedding = response.data[0].embedding;
+console.log(`Embedding dimension: ${embedding.length}`);
+console.log(`First 5 values: ${embedding.slice(0, 5)}`);
+```
+
+### Batch Embeddings (Node.js)
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:8090/v1',
+  apiKey: '<your-api-key>'
+});
+
+const texts = [
+  'Federated SQL queries',
+  'Data materialization',
+  'AI inference'
+];
+
+const response = await client.embeddings.create({
+  model: 'text-embedding-3-small',
+  input: texts
+});
+
+response.data.forEach((item, idx) => {
+  console.log(`Text ${idx}: ${item.embedding.length} dimensions`);
+});
+```
+
+## Use Cases
+
+### Semantic Search
+
+Embed your documents and user queries to find semantically similar content:
+
+```python
+import numpy as np
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8090/v1", api_key="<key>")
+
+# Embed documents
+docs = ["Document 1 text", "Document 2 text", "Document 3 text"]
+doc_embeddings = client.embeddings.create(
+    model="text-embedding-ada-002",
+    input=docs
+)
+
+# Embed query
+query = "search query"
+query_embedding = client.embeddings.create(
+    model="text-embedding-ada-002",
+    input=query
+).data[0].embedding
+
+# Calculate cosine similarity
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+for i, doc_emb in enumerate(doc_embeddings.data):
+    similarity = cosine_similarity(query_embedding, doc_emb.embedding)
+    print(f"Document {i} similarity: {similarity:.4f}")
+```
+
+### Document Clustering
+
+```python
+from sklearn.cluster import KMeans
+import numpy as np
+
+# Get embeddings for multiple documents
+documents = ["doc1", "doc2", "doc3", "doc4", "doc5"]
+response = client.embeddings.create(
+    model="text-embedding-ada-002",
+    input=documents
+)
+
+embeddings = np.array([item.embedding for item in response.data])
+
+# Cluster documents
+kmeans = KMeans(n_clusters=2, random_state=42)
+clusters = kmeans.fit_predict(embeddings)
+
+for i, cluster in enumerate(clusters):
+    print(f"Document {i}: Cluster {cluster}")
+```
+
+## Error Responses
+
+### Model Not Found (404)
+
+```json
+{
+  "error": "model not found"
+}
+```
+
+### Internal Server Error (500)
+
+```json
+{
+  "error": "Unexpected internal server error occurred"
+}
+```
+
+## Supported Models
+
+The available embedding models depend on your Spice configuration. Common models include:
+
+- OpenAI: `text-embedding-ada-002`, `text-embedding-3-small`, `text-embedding-3-large`
+- Open-source: Configure custom embedding models in your Spicepod
+
+Check your Spice configuration for the complete list of available models.
+
+## Best Practices
+
+1. **Batch requests**: Process multiple texts in a single API call for better performance
+2. **Consistent models**: Use the same embedding model for queries and documents in search applications
+3. **Dimension awareness**: Different models produce different embedding dimensions
+4. **Normalization**: For similarity calculations, embeddings are typically normalized
+5. **Caching**: Cache embeddings for frequently used texts to reduce API calls
+
+## Token Limits
+
+Each embedding model has a maximum token limit:
+- `text-embedding-ada-002`: 8,191 tokens
+- `text-embedding-3-small`: 8,191 tokens
+- `text-embedding-3-large`: 8,191 tokens
+
+Texts exceeding the limit will be truncated or rejected depending on the model configuration.
